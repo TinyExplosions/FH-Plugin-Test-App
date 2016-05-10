@@ -23,7 +23,7 @@
     {
       "id": "org.apache.cordova.inappbrowser",
       "url": "https://github.com/apache/cordova-plugin-inappbrowser",
-      "version": "1.4.0"
+      "version": "latest"
     },
     {
       "id": "org.apache.cordova.splashscreen",
@@ -33,6 +33,11 @@
     {
       "id": "cordova-plugin-badge",
       "url": "https://github.com/katzer/cordova-plugin-badge.git#0.6.0",
+      "version": "latest"
+    },
+    {
+      "id": "cordova-plugin-dialogs",
+      "url": "https://github.com/apache/cordova-plugin-dialogs",
       "version": "latest"
     },
     {

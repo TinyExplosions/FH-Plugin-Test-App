@@ -81,7 +81,11 @@ define([
           if(url) {
             window.open(url, '_blank', 'location=yes,enableViewportScale=yes,toolbarposition=top');
           } else {
-            alert("You don't seem to have downloaded the document yet");
+            if(navigator.notification && navigator.notification.alert) {
+              navigator.notification.alert("You don't seem to have downloaded the document yet", function(){}, 'Oh Dear', 'boo');
+            } else {
+              alert("You don't seem to have downloaded the document yet");  
+            }
           }
         }, 
 
