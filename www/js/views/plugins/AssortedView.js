@@ -9,7 +9,7 @@ define([
 
         initialize: function(options) {
             localStorage.removeItem('docDownloaded');
-            _.bindAll(this, 'render', 'downloadDoc', 'downloadSuccess', 'downloadError');
+            _.bindAll(this, 'render', 'downloadDoc', 'downloadSuccess', 'downloadError', 'deleteSuccess');
         },
 
         events: {

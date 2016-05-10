@@ -26,11 +26,6 @@
       "version": "latest"
     },
     {
-      "id": "cordova-plugin-splashscreen",
-      "url": "https://github.com/apache/cordova-plugin-splashscreen",
-      "version": "latest"
-    },
-    {
       "id": "cordova-plugin-badge",
       "url": "https://github.com/katzer/cordova-plugin-badge.git#0.6.0",
       "version": "latest"

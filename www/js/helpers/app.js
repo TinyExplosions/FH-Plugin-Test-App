@@ -49,12 +49,6 @@ define([
         });
         ConnectionHelper.initialize();
 
-
-        if (navigator.splashscreen) {
-            alert("Hide the splash!");
-            navigator.splashscreen.hide();
-        }
-
         this.Router = new Router();
         onStartup.then(function() {
             console.log("START THE KRAKEN!");
