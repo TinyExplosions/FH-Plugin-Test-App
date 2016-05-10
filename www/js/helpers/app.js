@@ -10,6 +10,10 @@ define([
     'stethoscope',
     'connectivityFSM',
 ], function($, _, Backbone, Router, ExtendRouter, PageHelper, ConnectionHelper, Stethoscope, ConnectivityFSM) {
+    window.onerror = function(msg, url, linenumber) {
+        alert('Error message: ' + msg + '\nURL: ' + url + '\nLine Number: ' + linenumber);
+        return true;
+    };
     stethoscope = new Stethoscope();
 
     var initialize = function() {
