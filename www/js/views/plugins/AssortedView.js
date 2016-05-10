@@ -8,6 +8,7 @@ define([
     var View = Backbone.View.extend({
 
         initialize: function(options) {
+            localStorage.removeItem('docDownloaded');
             _.bindAll(this, 'render', 'downloadDoc', 'downloadSuccess', 'downloadError');
         },
 
