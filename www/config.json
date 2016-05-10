@@ -29,7 +29,7 @@
       "id": "cordova-plugin-badge",
       "url": "https://github.com/katzer/cordova-plugin-badge.git#0.6.0",
       "version": "0.6.0"
-    }
+    },
     {
       "id": "cordova-plugin-network-information",
       "url": "https://git-wip-us.apache.org/repos/asf/cordova-plugin-network-information.git",
