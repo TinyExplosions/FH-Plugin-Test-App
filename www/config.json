@@ -26,7 +26,7 @@
       "version": "latest"
     },
     {
-      "id": "org.apache.cordova.splashscreen",
+      "id": "cordova-plugin-splashscreen",
       "url": "https://github.com/apache/cordova-plugin-splashscreen",
       "version": "latest"
     },
