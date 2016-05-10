@@ -21,6 +21,11 @@
       "version": "latest"
     },
     {
+      "id": "org.apache.cordova.inappbrowser",
+      "url": "https://github.com/apache/cordova-plugin-inappbrowser",
+      "version": "1.4.0"
+    },
+    {
       "id": "org.apache.cordova.splashscreen",
       "url": "https://github.com/apache/cordova-plugin-splashscreen",
       "version": "latest"
