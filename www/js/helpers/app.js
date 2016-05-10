@@ -51,6 +51,7 @@ define([
 
 
         if (navigator.splashscreen) {
+            alert("Hide the splash!");
             navigator.splashscreen.hide();
         }
 
