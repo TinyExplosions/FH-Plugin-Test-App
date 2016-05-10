@@ -1,0 +1,423 @@
+header ~ .content {
+    margin-top: 56px;
+}
+
+.no-scroll .content {
+  height: 100%;
+  overflow: hidden;
+}
+
+html {
+    font-size: 16px;
+}
+
+.formError {
+    display: none;
+}
+
+.errorState .formError {
+    display: block;
+}
+
+.align-right {
+    float: right;
+}
+
+.nav_title {
+  font-size: 16px;
+  font-weight: 500;
+  font-style: italic;
+  line-height: 44px;
+  color: white;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.nav_text {
+  font-size: 15px;
+  color: white;
+  padding: 0px 10px;
+}
+
+.center {
+  text-align:center;
+}
+
+select {
+    height: 35px;
+    font-size: 16px;
+    background-color: #fff;
+}
+
+
+.navigation {
+    display: -webkit-flex;
+    display: -ms-flexbox;
+    display: flex;
+    -webkit-box-orient: vertical;
+    -webkit-box-direction: normal;
+    -webkit-flex-direction: column;
+    -ms-flex-direction: column;
+    flex-direction: column;
+    -webkit-flex-wrap: nowrap;
+    -ms-flex-wrap: nowrap;
+    flex-wrap: nowrap;
+    width: 280px;
+    height: 100%;
+    max-height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-shadow: 0 2px 2px 0 rgba(0,0,0,.14),0 3px 1px -2px rgba(0,0,0,.2),0 1px 5px 0 rgba(0,0,0,.12);
+    box-sizing: border-box;
+    border-right: 1px solid #e0e0e0;
+    background: #fafafa;
+    -webkit-transform: translateX(-290px);
+    -ms-transform: translateX(-290px);
+    transform: translateX(-290px);
+    -webkit-transform-style: preserve-3d;
+    transform-style: preserve-3d;
+    will-change: transform;
+    -webkit-transition-duration: .2s;
+    transition-duration: .2s;
+    -webkit-transition-timing-function: cubic-bezier(.4,0,.2,1);
+    transition-timing-function: cubic-bezier(.4,0,.2,1);
+    -webkit-transition-property: -webkit-transform;
+    transition-property: transform;
+    color: #424242;
+    overflow: visible;
+    overflow-y: auto;
+    z-index: 15;
+}
+
+.navigation.is-visible {
+    -webkit-transform: translateX(0);
+    -ms-transform: translateX(0);
+    transform: translateX(0);
+}
+
+.obfuscator, .confirmationView {
+    position: fixed;
+    background-color: transparent;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 100%;
+    z-index: 12;
+    visibility: hidden;
+    -webkit-transition-property: background-color;
+    transition-property: background-color;
+    -webkit-transition-duration: .2s;
+    transition-duration: .2s;
+    -webkit-transition-timing-function: cubic-bezier(.4,0,.2,1);
+    transition-timing-function: cubic-bezier(.4,0,.2,1);
+}
+
+
+.navigation.is-visible~.obfuscator, .confirmationView {
+    background-color: rgba(0,0,0,.5);
+    visibility: visible;
+}
+.navigation>* {
+    -webkit-flex-shrink: 0;
+    -ms-flex-negative: 0;
+    flex-shrink: 0;
+}
+
+.mdl-layout-spacer {
+    -webkit-box-flex: 1;
+    -webkit-flex-grow: 1;
+    -ms-flex-positive: 1;
+    flex-grow: 1;
+}
+
+
+
+/* The following CSS makes sure a hand pointer is shown when hovering over links */
+a {
+    cursor: pointer; 
+}
+/* End of the following CSS makes sure a hand pointer is shown when hovering over links */
+
+
+/* Checkbox CSS */
+/*input[type=checkbox].css-checkbox {
+position: absolute; 
+overflow: hidden; 
+clip: rect(0 0 0 0); 
+height:1px; 
+width:1px; 
+margin:-1px; 
+padding:0;
+border:0;
+}
+
+input[type=checkbox].css-checkbox + label.css-label {
+padding-left:25px;
+margin-left: 10px;
+height:17px; 
+display:inline-block;
+line-height:17px;
+background-repeat:no-repeat;
+background-position: 0 0;
+font-size:15px;
+font-weight:normal;
+vertical-align:middle;
+cursor:pointer;
+}
+
+input[type=checkbox].css-checkbox:checked + label.css-label {
+background-position: 0 -17px;
+}
+
+.css-label{ background-image:url('../images/elegant.png'); }
+
+.checkbox {
+    margin-bottom: 15px;
+    background: #fff;
+    padding: 5px 15px;
+    border: 1px solid #dddddd;
+    border-radius: 3px;
+    outline: none;
+    -webkit-appearance: none;
+}
+
+.checkbox input {
+    margin-right: 5px;
+}
+
+.checkbox{
+    padding: 5px 30px;
+}*/
+/* End of Checkbox CSS */
+
+
+/* Start of Alert message CSS */
+.appAlert {
+  /*height: 100px;*/
+  background: #F5F5F5;
+  text-align: center;
+  /* width: 84.375%; */
+  width: 300px;
+  position: absolute;
+  left: 50%;
+  top: 30%; 
+  margin-top: -50px;
+  margin-left: -150px;
+  z-index: 300;
+  -moz-box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.3);
+  -webkit-box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.3);
+  box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.3);
+  -moz-border-radius: 7px;
+  -webkit-border-radius: 7px;
+  border-radius: 7px;
+}
+
+.appAlert .alerttitle {
+  font-size: 1.2em;
+  padding-top: 5px;
+  color: #000;
+  text-align: center;
+}
+
+.appAlert .alertcontent {
+  /* line-height: 4.0em; */
+  /* padding: 0 1em; */
+  padding: 30px 10px;
+  margin: 10px;
+}
+
+.appAlert .buttons {
+  text-align: center;
+  width: 100%;
+}
+
+.appAlert .buttons a {
+  border-top: 1px solid #AEAEAE;
+  color: #005172;
+  display: inline-block;
+  text-align: center;
+  font-size: 1.2em;
+  width: 100%;
+  line-height: 2.5em;
+}
+
+.appAlert .buttons.half a {
+  width: 50%;
+  float: left;
+}
+
+.appAlert .buttons a:last-child {
+  -webkit-border-bottom-left-radius: 7px;
+  -moz-border-radius-bottomleft: 7px;
+  border-bottom-left-radius: 7px;
+  -webkit-border-bottom-right-radius: 7px;
+  -moz-border-radius-bottomright: 7px;
+  border-bottom-right-radius: 7px;
+}
+
+.appAlert .buttons.half a:first-child {
+  border-right: 1px solid #AEAEAE;
+  -webkit-border-bottom-left-radius: 7px;
+  -moz-border-radius-bottomleft: 7px;
+  border-bottom-left-radius: 7px;
+}
+
+.appAlert .buttons.half a:last-child {
+  -webkit-border-bottom-right-radius: 7px;
+  -moz-border-radius-bottomright: 7px;
+  border-bottom-right-radius: 7px;
+  -webkit-border-bottom-left-radius: 0px;
+  -moz-border-radius-bottomleft: 0px;
+  border-bottom-left-radius: 0px;
+}
+
+.appAlert .buttons a:active {
+  background: #AEAEAE;
+  color: #ffffff;
+}
+
+.dismiss {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  text-align: center;
+  padding-bottom: 5px;
+}
+
+.alertWrapper {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+}
+
+.close {
+  opacity: 1;
+  font-weight: normal;
+}
+
+.panel {
+  padding-right: 0px;
+  padding-left: 0px;
+}
+/* End of Alert message CSS */
+
+
+/* Start of loading spinner CSS */
+#loading {
+  width: 100%;
+  height: 100%;
+  top: 0px;
+  left: 0px;
+  position: fixed;
+  display: block;
+  opacity: 0.7;
+  background-color: #fff;
+  z-index: 99;
+  text-align: center;
+}
+#loading-image {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 100;
+  margin: -25px 0 0 -25px;
+}
+/* End of loading spinner CSS */
+
+ul.table-view.navslider {
+    padding-top: 8em;
+    /*background: #bada55;*/
+}
+
+.navigation .pull-left {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.navigation .media-body {
+    line-height: 1.8em;
+}
+
+.confirmBox {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    max-height: 90%;
+    z-index: 14;
+    margin-left: -140px;
+    width: 280px;
+    background: #fff;
+    padding: 24px;
+    padding-bottom: 76px;
+    box-sizing: border-box;
+    border-radius: 2px;
+    box-shadow: 0 2px 5px 0 rgba(0, 0, 0, 0.16), 0 2px 10px 0 rgba(0, 0, 0, 0.12);
+}
+
+.confirmBox h4 {
+  font-size: 24px;
+  margin: 0 0 20px 0;
+}
+
+.confirmBox p {
+    font-weight: normal;
+    font-size: 14px;
+    line-height: 1.5em;
+    color: rgba(0, 0, 0, 0.87);
+}
+
+.confirmBox .btnBox {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 52px;
+    border-radius: 2px;
+    background: #fff;
+}
+
+.confirmBox .btnBox a {
+    float: right;
+    font-size: 14px;
+    font-weight: 300;
+    line-height: 36px;
+    display: inline-block;
+    box-sizing: border-box;
+    min-width: 64px;
+    padding: 0 8px;
+    margin: 8px 8px 8px 0;
+    text-align: center;
+    text-transform: uppercase;
+    color: #2196F3;
+}
+
+
+/*ul.table-view.navslider li {
+    background: #fff;
+}*/
+
+/* Default wide-screen styles */
+
+@media only screen 
+and (min-device-width: 768px) 
+and (max-device-width: 1024px) 
+and (orientation: landscape) {
+
+}
+
+@media only screen 
+and (min-device-width : 768px) 
+and (max-device-width : 1024px) 
+and (orientation : portrait) { 
+
+}
+
+@media (min-width: 700px) {
+  .content-padded {
+    font-size: 1.1rem;
+  }
+
+  p {
+    font-size: 1.1rem;
+}

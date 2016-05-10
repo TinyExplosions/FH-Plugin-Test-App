@@ -1,0 +1,29 @@
+{
+  "plugins": [
+    {
+      "id": "org.apache.cordova.statusbar",
+      "version": "latest",
+      "preferences": {
+        "StatusBarOverlaysWebView": "false",
+        "StatusBarBackgroundColor": "#005f82                                                         ",
+        "StatusBarStyle": "lightcontent"
+      }
+    },
+    {
+      "id": "org.apache.cordova.splashscreen",
+      "version": "latest"
+    },
+    {
+      "id": "cordova-plugin-network-information",
+      "url": "https://git-wip-us.apache.org/repos/asf/cordova-plugin-network-information.git",
+      "version": "latest"
+    },
+    {
+      "id": "cordova-plugin-appversion",
+      "url": "https://github.com/Rareloop/cordova-plugin-app-version.git#master",
+      "version": "latest"
+    }
+  ]
+}
+
+

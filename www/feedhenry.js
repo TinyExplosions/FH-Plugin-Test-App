@@ -4109,241 +4109,6 @@ Lawnchair.adapter('webkit-sqlite', (function() {
     }
   }
 })());
-Lawnchair.adapter('indexed-db', (function(){
-
-  function fail(e, i) {
-    if(console) { console.log('error in indexed-db adapter!' + e.message, e, i); debugger;}
-  } ;
-
-  function getIDB(){
-    return window.indexedDB || window.webkitIndexedDB || window.mozIndexedDB || window.oIndexedDB || window.msIndexedDB;
-  };
-
-
-
-  return {
-
-    valid: function() { return !!getIDB(); },
-
-    init:function(options, callback) {
-      this.idb = getIDB();
-      this.waiting = [];
-      var request = this.idb.open(this.name, 2);
-      var self = this;
-      var cb = self.fn(self.name, callback);
-      var win = function(){ return cb.call(self, self); }
-      //FEEDHENRY CHANGE TO ALLOW ERROR CALLBACK
-      if(options && 'function' === typeof options.fail) fail = options.fail
-      //END CHANGE
-      request.onupgradeneeded = function(event){
-        self.store = request.result.createObjectStore("teststore", { autoIncrement: true} );
-        for (var i = 0; i < self.waiting.length; i++) {
-          self.waiting[i].call(self);
-        }
-        self.waiting = [];
-        win();
-      }
-
-      request.onsuccess = function(event) {
-        self.db = request.result;
-
-
-        if(self.db.version != "2.0") {
-          if(typeof self.db.setVersion == 'function'){
-
-            var setVrequest = self.db.setVersion("2.0");
-            // onsuccess is the only place we can create Object Stores
-            setVrequest.onsuccess = function(e) {
-              self.store = self.db.createObjectStore("teststore", { autoIncrement: true} );
-              for (var i = 0; i < self.waiting.length; i++) {
-                self.waiting[i].call(self);
-              }
-              self.waiting = [];
-              win();
-            };
-            setVrequest.onerror = function(e) {
-             // console.log("Failed to create objectstore " + e);
-              fail(e);
-            }
-
-          }
-        } else {
-          self.store = {};
-          for (var i = 0; i < self.waiting.length; i++) {
-            self.waiting[i].call(self);
-          }
-          self.waiting = [];
-          win();
-        }
-      }
-      request.onerror = fail;
-    },
-
-    save:function(obj, callback) {
-      if(!this.store) {
-        this.waiting.push(function() {
-          this.save(obj, callback);
-        });
-        return;
-      }
-
-      var self = this;
-      var win  = function (e) { if (callback) { obj.key = e.target.result; self.lambda(callback).call(self, obj) }};
-      var accessType = "readwrite";
-      var trans = this.db.transaction(["teststore"],accessType);
-      var store = trans.objectStore("teststore");
-      var request = obj.key ? store.put(obj, obj.key) : store.put(obj);
-
-      request.onsuccess = win;
-      request.onerror = fail;
-
-      return this;
-    },
-
-    // FIXME this should be a batch insert / just getting the test to pass...
-    batch: function (objs, cb) {
-
-      var results = []
-        ,   done = false
-        ,   self = this
-
-      var updateProgress = function(obj) {
-        results.push(obj)
-        done = results.length === objs.length
-      }
-
-      var checkProgress = setInterval(function() {
-        if (done) {
-          if (cb) self.lambda(cb).call(self, results)
-          clearInterval(checkProgress)
-        }
-      }, 200)
-
-      for (var i = 0, l = objs.length; i < l; i++)
-        this.save(objs[i], updateProgress)
-
-      return this
-    },
-
-
-    get:function(key, callback) {
-      if(!this.store || !this.db) {
-        this.waiting.push(function() {
-          this.get(key, callback);
-        });
-        return;
-      }
-
-
-      var self = this;
-      var win  = function (e) { if (callback) { self.lambda(callback).call(self, e.target.result) }};
-
-
-      if (!this.isArray(key)){
-        var req = this.db.transaction("teststore").objectStore("teststore").get(key);
-
-        req.onsuccess = win;
-        req.onerror = function(event) {
-          //console.log("Failed to find " + key);
-          fail(event);
-        };
-
-        // FIXME: again the setInterval solution to async callbacks..
-      } else {
-
-        // note: these are hosted.
-        var results = []
-          ,   done = false
-          ,   keys = key
-
-        var updateProgress = function(obj) {
-          results.push(obj)
-          done = results.length === keys.length
-        }
-
-        var checkProgress = setInterval(function() {
-          if (done) {
-            if (callback) self.lambda(callback).call(self, results)
-            clearInterval(checkProgress)
-          }
-        }, 200)
-
-        for (var i = 0, l = keys.length; i < l; i++)
-          this.get(keys[i], updateProgress)
-
-      }
-
-      return this;
-    },
-
-    all:function(callback) {
-      if(!this.store) {
-        this.waiting.push(function() {
-          this.all(callback);
-        });
-        return;
-      }
-      var cb = this.fn(this.name, callback) || undefined;
-      var self = this;
-      var objectStore = this.db.transaction("teststore").objectStore("teststore");
-      var toReturn = [];
-      objectStore.openCursor().onsuccess = function(event) {
-        var cursor = event.target.result;
-        if (cursor) {
-          toReturn.push(cursor.value);
-          cursor.continue();
-        }
-        else {
-          if (cb) cb.call(self, toReturn);
-        }
-      };
-      return this;
-    },
-
-    remove:function(keyOrObj, callback) {
-      if(!this.store) {
-        this.waiting.push(function() {
-          this.remove(keyOrObj, callback);
-        });
-        return;
-      }
-      if (typeof keyOrObj == "object") {
-        keyOrObj = keyOrObj.key;
-      }
-      var self = this;
-      var win  = function () { if (callback) self.lambda(callback).call(self) };
-
-      var request = this.db.transaction(["teststore"], "readwrite").objectStore("teststore").delete(keyOrObj);
-      request.onsuccess = win;
-      request.onerror = fail;
-      return this;
-    },
-
-    nuke:function(callback) {
-      if(!this.store) {
-        this.waiting.push(function() {
-          this.nuke(callback);
-        });
-        return;
-      }
-
-      var self = this
-        ,   win  = callback ? function() { self.lambda(callback).call(self) } : function(){};
-
-      try {
-        this.db
-          .transaction(["teststore"], "readwrite")
-          .objectStore("teststore").clear().onsuccess = win;
-
-      } catch(e) {
-        fail();
-      }
-      return this;
-    }
-
-  };
-
-})());
 Lawnchair.adapter('html5-filesystem', (function(global){
 
   var FileError = global.FileError;
@@ -4784,6 +4549,501 @@ Lawnchair.adapter('memory', (function(){
 
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{}],3:[function(_dereq_,module,exports){
+(function (global){
+;__browserify_shim_require__=_dereq_;(function browserifyShim(module, exports, _dereq_, define, browserify_shim__define__module__export__) {
+/*
+ json2.js
+ 2011-10-19
+
+ Public Domain.
+
+ NO WARRANTY EXPRESSED OR IMPLIED. USE AT YOUR OWN RISK.
+
+ See http://www.JSON.org/js.html
+
+
+ This code should be minified before deployment.
+ See http://javascript.crockford.com/jsmin.html
+
+ USE YOUR OWN COPY. IT IS EXTREMELY UNWISE TO LOAD CODE FROM SERVERS YOU DO
+ NOT CONTROL.
+
+
+ This file creates a global JSON object containing two methods: stringify
+ and parse.
+
+ JSON.stringify(value, replacer, space)
+ value       any JavaScript value, usually an object or array.
+
+ replacer    an optional parameter that determines how object
+ values are stringified for objects. It can be a
+ function or an array of strings.
+
+ space       an optional parameter that specifies the indentation
+ of nested structures. If it is omitted, the text will
+ be packed without extra whitespace. If it is a number,
+ it will specify the number of spaces to indent at each
+ level. If it is a string (such as '\t' or '&nbsp;'),
+ it contains the characters used to indent at each level.
+
+ This method produces a JSON text from a JavaScript value.
+
+ When an object value is found, if the object contains a toJSON
+ method, its toJSON method will be called and the result will be
+ stringified. A toJSON method does not serialize: it returns the
+ value represented by the name/value pair that should be serialized,
+ or undefined if nothing should be serialized. The toJSON method
+ will be passed the key associated with the value, and this will be
+ bound to the value
+
+ For example, this would serialize Dates as ISO strings.
+
+ Date.prototype.toJSON = function (key) {
+ function f(n) {
+ // Format integers to have at least two digits.
+ return n < 10 ? '0' + n : n;
+ }
+
+ return this.getUTCFullYear()   + '-' +
+ f(this.getUTCMonth() + 1) + '-' +
+ f(this.getUTCDate())      + 'T' +
+ f(this.getUTCHours())     + ':' +
+ f(this.getUTCMinutes())   + ':' +
+ f(this.getUTCSeconds())   + 'Z';
+ };
+
+ You can provide an optional replacer method. It will be passed the
+ key and value of each member, with this bound to the containing
+ object. The value that is returned from your method will be
+ serialized. If your method returns undefined, then the member will
+ be excluded from the serialization.
+
+ If the replacer parameter is an array of strings, then it will be
+ used to select the members to be serialized. It filters the results
+ such that only members with keys listed in the replacer array are
+ stringified.
+
+ Values that do not have JSON representations, such as undefined or
+ functions, will not be serialized. Such values in objects will be
+ dropped; in arrays they will be replaced with null. You can use
+ a replacer function to replace those with JSON values.
+ JSON.stringify(undefined) returns undefined.
+
+ The optional space parameter produces a stringification of the
+ value that is filled with line breaks and indentation to make it
+ easier to read.
+
+ If the space parameter is a non-empty string, then that string will
+ be used for indentation. If the space parameter is a number, then
+ the indentation will be that many spaces.
+
+ Example:
+
+ text = JSON.stringify(['e', {pluribus: 'unum'}]);
+ // text is '["e",{"pluribus":"unum"}]'
+
+
+ text = JSON.stringify(['e', {pluribus: 'unum'}], null, '\t');
+ // text is '[\n\t"e",\n\t{\n\t\t"pluribus": "unum"\n\t}\n]'
+
+ text = JSON.stringify([new Date()], function (key, value) {
+ return this[key] instanceof Date ?
+ 'Date(' + this[key] + ')' : value;
+ });
+ // text is '["Date(---current time---)"]'
+
+
+ JSON.parse(text, reviver)
+ This method parses a JSON text to produce an object or array.
+ It can throw a SyntaxError exception.
+
+ The optional reviver parameter is a function that can filter and
+ transform the results. It receives each of the keys and values,
+ and its return value is used instead of the original value.
+ If it returns what it received, then the structure is not modified.
+ If it returns undefined then the member is deleted.
+
+ Example:
+
+ // Parse the text. Values that look like ISO date strings will
+ // be converted to Date objects.
+
+ myData = JSON.parse(text, function (key, value) {
+ var a;
+ if (typeof value === 'string') {
+ a =
+ /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2}(?:\.\d*)?)Z$/.exec(value);
+ if (a) {
+ return new Date(Date.UTC(+a[1], +a[2] - 1, +a[3], +a[4],
+ +a[5], +a[6]));
+ }
+ }
+ return value;
+ });
+
+ myData = JSON.parse('["Date(09/09/2001)"]', function (key, value) {
+ var d;
+ if (typeof value === 'string' &&
+ value.slice(0, 5) === 'Date(' &&
+ value.slice(-1) === ')') {
+ d = new Date(value.slice(5, -1));
+ if (d) {
+ return d;
+ }
+ }
+ return value;
+ });
+
+
+ This is a reference implementation. You are free to copy, modify, or
+ redistribute.
+ */
+
+/*jslint evil: true, regexp: true */
+
+/*members "", "\b", "\t", "\n", "\f", "\r", "\"", JSON, "\\", apply,
+ call, charCodeAt, getUTCDate, getUTCFullYear, getUTCHours,
+ getUTCMinutes, getUTCMonth, getUTCSeconds, hasOwnProperty, join,
+ lastIndex, length, parse, prototype, push, replace, slice, stringify,
+ test, toJSON, toString, valueOf
+ */
+
+
+// Create a JSON object only if one does not already exist. We create the
+// methods in a closure to avoid creating global variables.
+
+var JSON;
+if (!JSON) {
+  JSON = {};
+}
+
+(function () {
+  'use strict';
+
+  function f(n) {
+    // Format integers to have at least two digits.
+    return n < 10 ? '0' + n : n;
+  }
+
+  if (typeof Date.prototype.toJSON !== 'function') {
+
+    Date.prototype.toJSON = function (key) {
+
+      return isFinite(this.valueOf())
+        ? this.getUTCFullYear()     + '-' +
+        f(this.getUTCMonth() + 1) + '-' +
+        f(this.getUTCDate())      + 'T' +
+        f(this.getUTCHours())     + ':' +
+        f(this.getUTCMinutes())   + ':' +
+        f(this.getUTCSeconds())   + 'Z'
+        : null;
+    };
+
+    String.prototype.toJSON      =
+      Number.prototype.toJSON  =
+        Boolean.prototype.toJSON = function (key) {
+          return this.valueOf();
+        };
+  }
+
+  var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
+    escapable = /[\\\"\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
+    gap,
+    indent,
+    meta = {    // table of character substitutions
+      '\b': '\\b',
+      '\t': '\\t',
+      '\n': '\\n',
+      '\f': '\\f',
+      '\r': '\\r',
+      '"' : '\\"',
+      '\\': '\\\\'
+    },
+    rep;
+
+
+  function quote(string) {
+
+// If the string contains no control characters, no quote characters, and no
+// backslash characters, then we can safely slap some quotes around it.
+// Otherwise we must also replace the offending characters with safe escape
+// sequences.
+
+    escapable.lastIndex = 0;
+    return escapable.test(string) ? '"' + string.replace(escapable, function (a) {
+      var c = meta[a];
+      return typeof c === 'string'
+        ? c
+        : '\\u' + ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
+    }) + '"' : '"' + string + '"';
+  }
+
+
+  function str(key, holder) {
+
+// Produce a string from holder[key].
+
+    var i,          // The loop counter.
+      k,          // The member key.
+      v,          // The member value.
+      length,
+      mind = gap,
+      partial,
+      value = holder[key];
+
+// If the value has a toJSON method, call it to obtain a replacement value.
+
+    if (value && typeof value === 'object' &&
+      typeof value.toJSON === 'function') {
+      value = value.toJSON(key);
+    }
+
+// If we were called with a replacer function, then call the replacer to
+// obtain a replacement value.
+
+    if (typeof rep === 'function') {
+      value = rep.call(holder, key, value);
+    }
+
+// What happens next depends on the value's type.
+
+    switch (typeof value) {
+      case 'string':
+        return quote(value);
+
+      case 'number':
+
+// JSON numbers must be finite. Encode non-finite numbers as null.
+
+        return isFinite(value) ? String(value) : 'null';
+
+      case 'boolean':
+      case 'null':
+
+// If the value is a boolean or null, convert it to a string. Note:
+// typeof null does not produce 'null'. The case is included here in
+// the remote chance that this gets fixed someday.
+
+        return String(value);
+
+// If the type is 'object', we might be dealing with an object or an array or
+// null.
+
+      case 'object':
+
+// Due to a specification blunder in ECMAScript, typeof null is 'object',
+// so watch out for that case.
+
+        if (!value) {
+          return 'null';
+        }
+
+// Make an array to hold the partial results of stringifying this object value.
+
+        gap += indent;
+        partial = [];
+
+// Is the value an array?
+
+        if (Object.prototype.toString.apply(value) === '[object Array]') {
+
+// The value is an array. Stringify every element. Use null as a placeholder
+// for non-JSON values.
+
+          length = value.length;
+          for (i = 0; i < length; i += 1) {
+            partial[i] = str(i, value) || 'null';
+          }
+
+// Join all of the elements together, separated with commas, and wrap them in
+// brackets.
+
+          v = partial.length === 0
+            ? '[]'
+            : gap
+            ? '[\n' + gap + partial.join(',\n' + gap) + '\n' + mind + ']'
+            : '[' + partial.join(',') + ']';
+          gap = mind;
+          return v;
+        }
+
+// If the replacer is an array, use it to select the members to be stringified.
+
+        if (rep && typeof rep === 'object') {
+          length = rep.length;
+          for (i = 0; i < length; i += 1) {
+            if (typeof rep[i] === 'string') {
+              k = rep[i];
+              v = str(k, value);
+              if (v) {
+                partial.push(quote(k) + (gap ? ': ' : ':') + v);
+              }
+            }
+          }
+        } else {
+
+// Otherwise, iterate through all of the keys in the object.
+
+          for (k in value) {
+            if (Object.prototype.hasOwnProperty.call(value, k)) {
+              v = str(k, value);
+              if (v) {
+                partial.push(quote(k) + (gap ? ': ' : ':') + v);
+              }
+            }
+          }
+        }
+
+// Join all of the member texts together, separated with commas,
+// and wrap them in braces.
+
+        v = partial.length === 0
+          ? '{}'
+          : gap
+          ? '{\n' + gap + partial.join(',\n' + gap) + '\n' + mind + '}'
+          : '{' + partial.join(',') + '}';
+        gap = mind;
+        return v;
+    }
+  }
+
+// If the JSON object does not yet have a stringify method, give it one.
+
+  if (typeof JSON.stringify !== 'function') {
+    JSON.stringify = function (value, replacer, space) {
+
+// The stringify method takes a value and an optional replacer, and an optional
+// space parameter, and returns a JSON text. The replacer can be a function
+// that can replace values, or an array of strings that will select the keys.
+// A default replacer method can be provided. Use of the space parameter can
+// produce text that is more easily readable.
+
+      var i;
+      gap = '';
+      indent = '';
+
+// If the space parameter is a number, make an indent string containing that
+// many spaces.
+
+      if (typeof space === 'number') {
+        for (i = 0; i < space; i += 1) {
+          indent += ' ';
+        }
+
+// If the space parameter is a string, it will be used as the indent string.
+
+      } else if (typeof space === 'string') {
+        indent = space;
+      }
+
+// If there is a replacer, it must be a function or an array.
+// Otherwise, throw an error.
+
+      rep = replacer;
+      if (replacer && typeof replacer !== 'function' &&
+        (typeof replacer !== 'object' ||
+          typeof replacer.length !== 'number')) {
+        throw new Error('JSON.stringify');
+      }
+
+// Make a fake root object containing our value under the key of ''.
+// Return the result of stringifying the value.
+
+      return str('', {'': value});
+    };
+  }
+
+
+// If the JSON object does not yet have a parse method, give it one.
+
+  if (typeof JSON.parse !== 'function') {
+    JSON.parse = function (text, reviver) {
+
+// The parse method takes a text and an optional reviver function, and returns
+// a JavaScript value if the text is a valid JSON text.
+
+      var j;
+
+      function walk(holder, key) {
+
+// The walk method is used to recursively walk the resulting structure so
+// that modifications can be made.
+
+        var k, v, value = holder[key];
+        if (value && typeof value === 'object') {
+          for (k in value) {
+            if (Object.prototype.hasOwnProperty.call(value, k)) {
+              v = walk(value, k);
+              if (v !== undefined) {
+                value[k] = v;
+              } else {
+                delete value[k];
+              }
+            }
+          }
+        }
+        return reviver.call(holder, key, value);
+      }
+
+
+// Parsing happens in four stages. In the first stage, we replace certain
+// Unicode characters with escape sequences. JavaScript handles many characters
+// incorrectly, either silently deleting them, or treating them as line endings.
+
+      text = String(text);
+      cx.lastIndex = 0;
+      if (cx.test(text)) {
+        text = text.replace(cx, function (a) {
+          return '\\u' +
+            ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
+        });
+      }
+
+// In the second stage, we run the text against regular expressions that look
+// for non-JSON patterns. We are especially concerned with '()' and 'new'
+// because they can cause invocation, and '=' because it can cause mutation.
+// But just to be safe, we want to reject all unexpected forms.
+
+// We split the second stage into 4 regexp operations in order to work around
+// crippling inefficiencies in IE's and Safari's regexp engines. First we
+// replace the JSON backslash pairs with '@' (a non-JSON character). Second, we
+// replace all simple value tokens with ']' characters. Third, we delete all
+// open brackets that follow a colon or comma or that begin the text. Finally,
+// we look to see that the remaining characters are only whitespace or ']' or
+// ',' or ':' or '{' or '}'. If that is so, then the text is safe for eval.
+
+      if (/^[\],:{}\s]*$/
+        .test(text.replace(/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g, '@')
+        .replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']')
+        .replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
+
+// In the third stage we use the eval function to compile the text into a
+// JavaScript structure. The '{' operator is subject to a syntactic ambiguity
+// in JavaScript: it can begin a block or an object literal. We wrap the text
+// in parens to eliminate the ambiguity.
+
+        j = eval('(' + text + ')');
+
+// In the optional fourth stage, we recursively walk the new structure, passing
+// each name/value pair to a reviver function for possible transformation.
+
+        return typeof reviver === 'function'
+          ? walk({'': j}, '')
+          : j;
+      }
+
+// If the text is not JSON parseable, then a SyntaxError is thrown.
+
+      throw new SyntaxError('JSON.parse');
+    };
+  }
+}());
+; browserify_shim__define__module__export__(typeof JSON != "undefined" ? JSON : window.JSON);
+
+}).call(global, undefined, undefined, undefined, undefined, function defineExport(ex) { module.exports = ex; });
+
+}).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{}],4:[function(_dereq_,module,exports){
 // Copyright (c) 2005  Tom Wu
 // All Rights Reserved.
 // See "LICENSE" for details.
@@ -5576,7 +5836,7 @@ module.exports = {
   byte2Hex: byte2Hex,
   RSAKey: RSAKey
 }
-},{}],4:[function(_dereq_,module,exports){
+},{}],5:[function(_dereq_,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -5938,1895 +6198,14 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":15}],5:[function(_dereq_,module,exports){
-(function (global){
-/*global window, global*/
-var util = _dereq_("util")
-var assert = _dereq_("assert")
-
-var slice = Array.prototype.slice
-var console
-var times = {}
-
-if (typeof global !== "undefined" && global.console) {
-    console = global.console
-} else if (typeof window !== "undefined" && window.console) {
-    console = window.console
-} else {
-    console = {}
-}
-
-var functions = [
-    [log, "log"]
-    , [info, "info"]
-    , [warn, "warn"]
-    , [error, "error"]
-    , [time, "time"]
-    , [timeEnd, "timeEnd"]
-    , [trace, "trace"]
-    , [dir, "dir"]
-    , [assert, "assert"]
-]
-
-for (var i = 0; i < functions.length; i++) {
-    var tuple = functions[i]
-    var f = tuple[0]
-    var name = tuple[1]
-
-    if (!console[name]) {
-        console[name] = f
-    }
-}
-
-module.exports = console
-
-function log() {}
-
-function info() {
-    console.log.apply(console, arguments)
-}
-
-function warn() {
-    console.log.apply(console, arguments)
-}
-
-function error() {
-    console.warn.apply(console, arguments)
-}
-
-function time(label) {
-    times[label] = Date.now()
-}
-
-function timeEnd(label) {
-    var time = times[label]
-    if (!time) {
-        throw new Error("No such label: " + label)
-    }
-
-    var duration = Date.now() - time
-    console.log(label + ": " + duration + "ms")
-}
-
-function trace() {
-    var err = new Error()
-    err.name = "Trace"
-    err.message = util.format.apply(null, arguments)
-    console.error(err.stack)
-}
-
-function dir(object) {
-    console.log(util.inspect(object) + "\n")
-}
-
-function assert(expression) {
-    if (!expression) {
-        var arr = slice.call(arguments, 1)
-        assert.ok(false, util.format.apply(null, arr))
-    }
-}
-
-}).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"assert":4,"util":15}],6:[function(_dereq_,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-function EventEmitter() {
-  this._events = this._events || {};
-  this._maxListeners = this._maxListeners || undefined;
-}
-module.exports = EventEmitter;
-
-// Backwards-compat with node 0.10.x
-EventEmitter.EventEmitter = EventEmitter;
-
-EventEmitter.prototype._events = undefined;
-EventEmitter.prototype._maxListeners = undefined;
-
-// By default EventEmitters will print a warning if more than 10 listeners are
-// added to it. This is a useful default which helps finding memory leaks.
-EventEmitter.defaultMaxListeners = 10;
-
-// Obviously not all Emitters should be limited to 10. This function allows
-// that to be increased. Set to zero for unlimited.
-EventEmitter.prototype.setMaxListeners = function(n) {
-  if (!isNumber(n) || n < 0 || isNaN(n))
-    throw TypeError('n must be a positive number');
-  this._maxListeners = n;
-  return this;
-};
-
-EventEmitter.prototype.emit = function(type) {
-  var er, handler, len, args, i, listeners;
-
-  if (!this._events)
-    this._events = {};
-
-  // If there is no 'error' event listener then throw.
-  if (type === 'error') {
-    if (!this._events.error ||
-        (isObject(this._events.error) && !this._events.error.length)) {
-      er = arguments[1];
-      if (er instanceof Error) {
-        throw er; // Unhandled 'error' event
-      }
-      throw TypeError('Uncaught, unspecified "error" event.');
-    }
-  }
-
-  handler = this._events[type];
-
-  if (isUndefined(handler))
-    return false;
-
-  if (isFunction(handler)) {
-    switch (arguments.length) {
-      // fast cases
-      case 1:
-        handler.call(this);
-        break;
-      case 2:
-        handler.call(this, arguments[1]);
-        break;
-      case 3:
-        handler.call(this, arguments[1], arguments[2]);
-        break;
-      // slower
-      default:
-        len = arguments.length;
-        args = new Array(len - 1);
-        for (i = 1; i < len; i++)
-          args[i - 1] = arguments[i];
-        handler.apply(this, args);
-    }
-  } else if (isObject(handler)) {
-    len = arguments.length;
-    args = new Array(len - 1);
-    for (i = 1; i < len; i++)
-      args[i - 1] = arguments[i];
-
-    listeners = handler.slice();
-    len = listeners.length;
-    for (i = 0; i < len; i++)
-      listeners[i].apply(this, args);
-  }
-
-  return true;
-};
-
-EventEmitter.prototype.addListener = function(type, listener) {
-  var m;
-
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  if (!this._events)
-    this._events = {};
-
-  // To avoid recursion in the case that type === "newListener"! Before
-  // adding it to the listeners, first emit "newListener".
-  if (this._events.newListener)
-    this.emit('newListener', type,
-              isFunction(listener.listener) ?
-              listener.listener : listener);
-
-  if (!this._events[type])
-    // Optimize the case of one listener. Don't need the extra array object.
-    this._events[type] = listener;
-  else if (isObject(this._events[type]))
-    // If we've already got an array, just append.
-    this._events[type].push(listener);
-  else
-    // Adding the second element, need to change to array.
-    this._events[type] = [this._events[type], listener];
-
-  // Check for listener leak
-  if (isObject(this._events[type]) && !this._events[type].warned) {
-    var m;
-    if (!isUndefined(this._maxListeners)) {
-      m = this._maxListeners;
-    } else {
-      m = EventEmitter.defaultMaxListeners;
-    }
-
-    if (m && m > 0 && this._events[type].length > m) {
-      this._events[type].warned = true;
-      console.error('(node) warning: possible EventEmitter memory ' +
-                    'leak detected. %d listeners added. ' +
-                    'Use emitter.setMaxListeners() to increase limit.',
-                    this._events[type].length);
-      if (typeof console.trace === 'function') {
-        // not supported in IE 10
-        console.trace();
-      }
-    }
-  }
-
-  return this;
-};
-
-EventEmitter.prototype.on = EventEmitter.prototype.addListener;
-
-EventEmitter.prototype.once = function(type, listener) {
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  var fired = false;
-
-  function g() {
-    this.removeListener(type, g);
-
-    if (!fired) {
-      fired = true;
-      listener.apply(this, arguments);
-    }
-  }
-
-  g.listener = listener;
-  this.on(type, g);
-
-  return this;
-};
-
-// emits a 'removeListener' event iff the listener was removed
-EventEmitter.prototype.removeListener = function(type, listener) {
-  var list, position, length, i;
-
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  if (!this._events || !this._events[type])
-    return this;
-
-  list = this._events[type];
-  length = list.length;
-  position = -1;
-
-  if (list === listener ||
-      (isFunction(list.listener) && list.listener === listener)) {
-    delete this._events[type];
-    if (this._events.removeListener)
-      this.emit('removeListener', type, listener);
-
-  } else if (isObject(list)) {
-    for (i = length; i-- > 0;) {
-      if (list[i] === listener ||
-          (list[i].listener && list[i].listener === listener)) {
-        position = i;
-        break;
-      }
-    }
-
-    if (position < 0)
-      return this;
-
-    if (list.length === 1) {
-      list.length = 0;
-      delete this._events[type];
-    } else {
-      list.splice(position, 1);
-    }
-
-    if (this._events.removeListener)
-      this.emit('removeListener', type, listener);
-  }
-
-  return this;
-};
-
-EventEmitter.prototype.removeAllListeners = function(type) {
-  var key, listeners;
-
-  if (!this._events)
-    return this;
-
-  // not listening for removeListener, no need to emit
-  if (!this._events.removeListener) {
-    if (arguments.length === 0)
-      this._events = {};
-    else if (this._events[type])
-      delete this._events[type];
-    return this;
-  }
-
-  // emit removeListener for all listeners on all events
-  if (arguments.length === 0) {
-    for (key in this._events) {
-      if (key === 'removeListener') continue;
-      this.removeAllListeners(key);
-    }
-    this.removeAllListeners('removeListener');
-    this._events = {};
-    return this;
-  }
-
-  listeners = this._events[type];
-
-  if (isFunction(listeners)) {
-    this.removeListener(type, listeners);
-  } else {
-    // LIFO order
-    while (listeners.length)
-      this.removeListener(type, listeners[listeners.length - 1]);
-  }
-  delete this._events[type];
-
-  return this;
-};
-
-EventEmitter.prototype.listeners = function(type) {
-  var ret;
-  if (!this._events || !this._events[type])
-    ret = [];
-  else if (isFunction(this._events[type]))
-    ret = [this._events[type]];
-  else
-    ret = this._events[type].slice();
-  return ret;
-};
-
-EventEmitter.listenerCount = function(emitter, type) {
-  var ret;
-  if (!emitter._events || !emitter._events[type])
-    ret = 0;
-  else if (isFunction(emitter._events[type]))
-    ret = 1;
-  else
-    ret = emitter._events[type].length;
-  return ret;
-};
-
-function isFunction(arg) {
-  return typeof arg === 'function';
-}
-
-function isNumber(arg) {
-  return typeof arg === 'number';
-}
-
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
-
-function isUndefined(arg) {
-  return arg === void 0;
-}
-
-},{}],7:[function(_dereq_,module,exports){
-if (typeof Object.create === 'function') {
-  // implementation from standard node.js 'util' module
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    ctor.prototype = Object.create(superCtor.prototype, {
-      constructor: {
-        value: ctor,
-        enumerable: false,
-        writable: true,
-        configurable: true
-      }
-    });
-  };
-} else {
-  // old school shim for old browsers
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    var TempCtor = function () {}
-    TempCtor.prototype = superCtor.prototype
-    ctor.prototype = new TempCtor()
-    ctor.prototype.constructor = ctor
-  }
-}
-
-},{}],8:[function(_dereq_,module,exports){
-// shim for using process in browser
-
-var process = module.exports = {};
-
-process.nextTick = (function () {
-    var canSetImmediate = typeof window !== 'undefined'
-    && window.setImmediate;
-    var canPost = typeof window !== 'undefined'
-    && window.postMessage && window.addEventListener
-    ;
-
-    if (canSetImmediate) {
-        return function (f) { return window.setImmediate(f) };
-    }
-
-    if (canPost) {
-        var queue = [];
-        window.addEventListener('message', function (ev) {
-            var source = ev.source;
-            if ((source === window || source === null) && ev.data === 'process-tick') {
-                ev.stopPropagation();
-                if (queue.length > 0) {
-                    var fn = queue.shift();
-                    fn();
-                }
-            }
-        }, true);
-
-        return function nextTick(fn) {
-            queue.push(fn);
-            window.postMessage('process-tick', '*');
-        };
-    }
-
-    return function nextTick(fn) {
-        setTimeout(fn, 0);
-    };
-})();
-
-process.title = 'browser';
-process.browser = true;
-process.env = {};
-process.argv = [];
-
-function noop() {}
-
-process.on = noop;
-process.addListener = noop;
-process.once = noop;
-process.off = noop;
-process.removeListener = noop;
-process.removeAllListeners = noop;
-process.emit = noop;
-
-process.binding = function (name) {
-    throw new Error('process.binding is not supported');
-}
-
-// TODO(shtylman)
-process.cwd = function () { return '/' };
-process.chdir = function (dir) {
-    throw new Error('process.chdir is not supported');
-};
-
-},{}],9:[function(_dereq_,module,exports){
-(function (global){
-/*! http://mths.be/punycode v1.2.4 by @mathias */
-;(function(root) {
-
-	/** Detect free variables */
-	var freeExports = typeof exports == 'object' && exports;
-	var freeModule = typeof module == 'object' && module &&
-		module.exports == freeExports && module;
-	var freeGlobal = typeof global == 'object' && global;
-	if (freeGlobal.global === freeGlobal || freeGlobal.window === freeGlobal) {
-		root = freeGlobal;
-	}
-
-	/**
-	 * The `punycode` object.
-	 * @name punycode
-	 * @type Object
-	 */
-	var punycode,
-
-	/** Highest positive signed 32-bit float value */
-	maxInt = 2147483647, // aka. 0x7FFFFFFF or 2^31-1
-
-	/** Bootstring parameters */
-	base = 36,
-	tMin = 1,
-	tMax = 26,
-	skew = 38,
-	damp = 700,
-	initialBias = 72,
-	initialN = 128, // 0x80
-	delimiter = '-', // '\x2D'
-
-	/** Regular expressions */
-	regexPunycode = /^xn--/,
-	regexNonASCII = /[^ -~]/, // unprintable ASCII chars + non-ASCII chars
-	regexSeparators = /\x2E|\u3002|\uFF0E|\uFF61/g, // RFC 3490 separators
-
-	/** Error messages */
-	errors = {
-		'overflow': 'Overflow: input needs wider integers to process',
-		'not-basic': 'Illegal input >= 0x80 (not a basic code point)',
-		'invalid-input': 'Invalid input'
-	},
-
-	/** Convenience shortcuts */
-	baseMinusTMin = base - tMin,
-	floor = Math.floor,
-	stringFromCharCode = String.fromCharCode,
-
-	/** Temporary variable */
-	key;
-
-	/*--------------------------------------------------------------------------*/
-
-	/**
-	 * A generic error utility function.
-	 * @private
-	 * @param {String} type The error type.
-	 * @returns {Error} Throws a `RangeError` with the applicable error message.
-	 */
-	function error(type) {
-		throw RangeError(errors[type]);
-	}
-
-	/**
-	 * A generic `Array#map` utility function.
-	 * @private
-	 * @param {Array} array The array to iterate over.
-	 * @param {Function} callback The function that gets called for every array
-	 * item.
-	 * @returns {Array} A new array of values returned by the callback function.
-	 */
-	function map(array, fn) {
-		var length = array.length;
-		while (length--) {
-			array[length] = fn(array[length]);
-		}
-		return array;
-	}
-
-	/**
-	 * A simple `Array#map`-like wrapper to work with domain name strings.
-	 * @private
-	 * @param {String} domain The domain name.
-	 * @param {Function} callback The function that gets called for every
-	 * character.
-	 * @returns {Array} A new string of characters returned by the callback
-	 * function.
-	 */
-	function mapDomain(string, fn) {
-		return map(string.split(regexSeparators), fn).join('.');
-	}
-
-	/**
-	 * Creates an array containing the numeric code points of each Unicode
-	 * character in the string. While JavaScript uses UCS-2 internally,
-	 * this function will convert a pair of surrogate halves (each of which
-	 * UCS-2 exposes as separate characters) into a single code point,
-	 * matching UTF-16.
-	 * @see `punycode.ucs2.encode`
-	 * @see <http://mathiasbynens.be/notes/javascript-encoding>
-	 * @memberOf punycode.ucs2
-	 * @name decode
-	 * @param {String} string The Unicode input string (UCS-2).
-	 * @returns {Array} The new array of code points.
-	 */
-	function ucs2decode(string) {
-		var output = [],
-		    counter = 0,
-		    length = string.length,
-		    value,
-		    extra;
-		while (counter < length) {
-			value = string.charCodeAt(counter++);
-			if (value >= 0xD800 && value <= 0xDBFF && counter < length) {
-				// high surrogate, and there is a next character
-				extra = string.charCodeAt(counter++);
-				if ((extra & 0xFC00) == 0xDC00) { // low surrogate
-					output.push(((value & 0x3FF) << 10) + (extra & 0x3FF) + 0x10000);
-				} else {
-					// unmatched surrogate; only append this code unit, in case the next
-					// code unit is the high surrogate of a surrogate pair
-					output.push(value);
-					counter--;
-				}
-			} else {
-				output.push(value);
-			}
-		}
-		return output;
-	}
-
-	/**
-	 * Creates a string based on an array of numeric code points.
-	 * @see `punycode.ucs2.decode`
-	 * @memberOf punycode.ucs2
-	 * @name encode
-	 * @param {Array} codePoints The array of numeric code points.
-	 * @returns {String} The new Unicode string (UCS-2).
-	 */
-	function ucs2encode(array) {
-		return map(array, function(value) {
-			var output = '';
-			if (value > 0xFFFF) {
-				value -= 0x10000;
-				output += stringFromCharCode(value >>> 10 & 0x3FF | 0xD800);
-				value = 0xDC00 | value & 0x3FF;
-			}
-			output += stringFromCharCode(value);
-			return output;
-		}).join('');
-	}
-
-	/**
-	 * Converts a basic code point into a digit/integer.
-	 * @see `digitToBasic()`
-	 * @private
-	 * @param {Number} codePoint The basic numeric code point value.
-	 * @returns {Number} The numeric value of a basic code point (for use in
-	 * representing integers) in the range `0` to `base - 1`, or `base` if
-	 * the code point does not represent a value.
-	 */
-	function basicToDigit(codePoint) {
-		if (codePoint - 48 < 10) {
-			return codePoint - 22;
-		}
-		if (codePoint - 65 < 26) {
-			return codePoint - 65;
-		}
-		if (codePoint - 97 < 26) {
-			return codePoint - 97;
-		}
-		return base;
-	}
-
-	/**
-	 * Converts a digit/integer into a basic code point.
-	 * @see `basicToDigit()`
-	 * @private
-	 * @param {Number} digit The numeric value of a basic code point.
-	 * @returns {Number} The basic code point whose value (when used for
-	 * representing integers) is `digit`, which needs to be in the range
-	 * `0` to `base - 1`. If `flag` is non-zero, the uppercase form is
-	 * used; else, the lowercase form is used. The behavior is undefined
-	 * if `flag` is non-zero and `digit` has no uppercase form.
-	 */
-	function digitToBasic(digit, flag) {
-		//  0..25 map to ASCII a..z or A..Z
-		// 26..35 map to ASCII 0..9
-		return digit + 22 + 75 * (digit < 26) - ((flag != 0) << 5);
-	}
-
-	/**
-	 * Bias adaptation function as per section 3.4 of RFC 3492.
-	 * http://tools.ietf.org/html/rfc3492#section-3.4
-	 * @private
-	 */
-	function adapt(delta, numPoints, firstTime) {
-		var k = 0;
-		delta = firstTime ? floor(delta / damp) : delta >> 1;
-		delta += floor(delta / numPoints);
-		for (/* no initialization */; delta > baseMinusTMin * tMax >> 1; k += base) {
-			delta = floor(delta / baseMinusTMin);
-		}
-		return floor(k + (baseMinusTMin + 1) * delta / (delta + skew));
-	}
-
-	/**
-	 * Converts a Punycode string of ASCII-only symbols to a string of Unicode
-	 * symbols.
-	 * @memberOf punycode
-	 * @param {String} input The Punycode string of ASCII-only symbols.
-	 * @returns {String} The resulting string of Unicode symbols.
-	 */
-	function decode(input) {
-		// Don't use UCS-2
-		var output = [],
-		    inputLength = input.length,
-		    out,
-		    i = 0,
-		    n = initialN,
-		    bias = initialBias,
-		    basic,
-		    j,
-		    index,
-		    oldi,
-		    w,
-		    k,
-		    digit,
-		    t,
-		    /** Cached calculation results */
-		    baseMinusT;
-
-		// Handle the basic code points: let `basic` be the number of input code
-		// points before the last delimiter, or `0` if there is none, then copy
-		// the first basic code points to the output.
-
-		basic = input.lastIndexOf(delimiter);
-		if (basic < 0) {
-			basic = 0;
-		}
-
-		for (j = 0; j < basic; ++j) {
-			// if it's not a basic code point
-			if (input.charCodeAt(j) >= 0x80) {
-				error('not-basic');
-			}
-			output.push(input.charCodeAt(j));
-		}
-
-		// Main decoding loop: start just after the last delimiter if any basic code
-		// points were copied; start at the beginning otherwise.
-
-		for (index = basic > 0 ? basic + 1 : 0; index < inputLength; /* no final expression */) {
-
-			// `index` is the index of the next character to be consumed.
-			// Decode a generalized variable-length integer into `delta`,
-			// which gets added to `i`. The overflow checking is easier
-			// if we increase `i` as we go, then subtract off its starting
-			// value at the end to obtain `delta`.
-			for (oldi = i, w = 1, k = base; /* no condition */; k += base) {
-
-				if (index >= inputLength) {
-					error('invalid-input');
-				}
-
-				digit = basicToDigit(input.charCodeAt(index++));
-
-				if (digit >= base || digit > floor((maxInt - i) / w)) {
-					error('overflow');
-				}
-
-				i += digit * w;
-				t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
-
-				if (digit < t) {
-					break;
-				}
-
-				baseMinusT = base - t;
-				if (w > floor(maxInt / baseMinusT)) {
-					error('overflow');
-				}
-
-				w *= baseMinusT;
-
-			}
-
-			out = output.length + 1;
-			bias = adapt(i - oldi, out, oldi == 0);
-
-			// `i` was supposed to wrap around from `out` to `0`,
-			// incrementing `n` each time, so we'll fix that now:
-			if (floor(i / out) > maxInt - n) {
-				error('overflow');
-			}
-
-			n += floor(i / out);
-			i %= out;
-
-			// Insert `n` at position `i` of the output
-			output.splice(i++, 0, n);
-
-		}
-
-		return ucs2encode(output);
-	}
-
-	/**
-	 * Converts a string of Unicode symbols to a Punycode string of ASCII-only
-	 * symbols.
-	 * @memberOf punycode
-	 * @param {String} input The string of Unicode symbols.
-	 * @returns {String} The resulting Punycode string of ASCII-only symbols.
-	 */
-	function encode(input) {
-		var n,
-		    delta,
-		    handledCPCount,
-		    basicLength,
-		    bias,
-		    j,
-		    m,
-		    q,
-		    k,
-		    t,
-		    currentValue,
-		    output = [],
-		    /** `inputLength` will hold the number of code points in `input`. */
-		    inputLength,
-		    /** Cached calculation results */
-		    handledCPCountPlusOne,
-		    baseMinusT,
-		    qMinusT;
-
-		// Convert the input in UCS-2 to Unicode
-		input = ucs2decode(input);
-
-		// Cache the length
-		inputLength = input.length;
-
-		// Initialize the state
-		n = initialN;
-		delta = 0;
-		bias = initialBias;
-
-		// Handle the basic code points
-		for (j = 0; j < inputLength; ++j) {
-			currentValue = input[j];
-			if (currentValue < 0x80) {
-				output.push(stringFromCharCode(currentValue));
-			}
-		}
-
-		handledCPCount = basicLength = output.length;
-
-		// `handledCPCount` is the number of code points that have been handled;
-		// `basicLength` is the number of basic code points.
-
-		// Finish the basic string - if it is not empty - with a delimiter
-		if (basicLength) {
-			output.push(delimiter);
-		}
-
-		// Main encoding loop:
-		while (handledCPCount < inputLength) {
-
-			// All non-basic code points < n have been handled already. Find the next
-			// larger one:
-			for (m = maxInt, j = 0; j < inputLength; ++j) {
-				currentValue = input[j];
-				if (currentValue >= n && currentValue < m) {
-					m = currentValue;
-				}
-			}
-
-			// Increase `delta` enough to advance the decoder's <n,i> state to <m,0>,
-			// but guard against overflow
-			handledCPCountPlusOne = handledCPCount + 1;
-			if (m - n > floor((maxInt - delta) / handledCPCountPlusOne)) {
-				error('overflow');
-			}
-
-			delta += (m - n) * handledCPCountPlusOne;
-			n = m;
-
-			for (j = 0; j < inputLength; ++j) {
-				currentValue = input[j];
-
-				if (currentValue < n && ++delta > maxInt) {
-					error('overflow');
-				}
-
-				if (currentValue == n) {
-					// Represent delta as a generalized variable-length integer
-					for (q = delta, k = base; /* no condition */; k += base) {
-						t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
-						if (q < t) {
-							break;
-						}
-						qMinusT = q - t;
-						baseMinusT = base - t;
-						output.push(
-							stringFromCharCode(digitToBasic(t + qMinusT % baseMinusT, 0))
-						);
-						q = floor(qMinusT / baseMinusT);
-					}
-
-					output.push(stringFromCharCode(digitToBasic(q, 0)));
-					bias = adapt(delta, handledCPCountPlusOne, handledCPCount == basicLength);
-					delta = 0;
-					++handledCPCount;
-				}
-			}
-
-			++delta;
-			++n;
-
-		}
-		return output.join('');
-	}
-
-	/**
-	 * Converts a Punycode string representing a domain name to Unicode. Only the
-	 * Punycoded parts of the domain name will be converted, i.e. it doesn't
-	 * matter if you call it on a string that has already been converted to
-	 * Unicode.
-	 * @memberOf punycode
-	 * @param {String} domain The Punycode domain name to convert to Unicode.
-	 * @returns {String} The Unicode representation of the given Punycode
-	 * string.
-	 */
-	function toUnicode(domain) {
-		return mapDomain(domain, function(string) {
-			return regexPunycode.test(string)
-				? decode(string.slice(4).toLowerCase())
-				: string;
-		});
-	}
-
-	/**
-	 * Converts a Unicode string representing a domain name to Punycode. Only the
-	 * non-ASCII parts of the domain name will be converted, i.e. it doesn't
-	 * matter if you call it with a domain that's already in ASCII.
-	 * @memberOf punycode
-	 * @param {String} domain The domain name to convert, as a Unicode string.
-	 * @returns {String} The Punycode representation of the given domain name.
-	 */
-	function toASCII(domain) {
-		return mapDomain(domain, function(string) {
-			return regexNonASCII.test(string)
-				? 'xn--' + encode(string)
-				: string;
-		});
-	}
-
-	/*--------------------------------------------------------------------------*/
-
-	/** Define the public API */
-	punycode = {
-		/**
-		 * A string representing the current Punycode.js version number.
-		 * @memberOf punycode
-		 * @type String
-		 */
-		'version': '1.2.4',
-		/**
-		 * An object of methods to convert from JavaScript's internal character
-		 * representation (UCS-2) to Unicode code points, and back.
-		 * @see <http://mathiasbynens.be/notes/javascript-encoding>
-		 * @memberOf punycode
-		 * @type Object
-		 */
-		'ucs2': {
-			'decode': ucs2decode,
-			'encode': ucs2encode
-		},
-		'decode': decode,
-		'encode': encode,
-		'toASCII': toASCII,
-		'toUnicode': toUnicode
-	};
-
-	/** Expose `punycode` */
-	// Some AMD build optimizers, like r.js, check for specific condition patterns
-	// like the following:
-	if (
-		typeof define == 'function' &&
-		typeof define.amd == 'object' &&
-		define.amd
-	) {
-		define('punycode', function() {
-			return punycode;
-		});
-	} else if (freeExports && !freeExports.nodeType) {
-		if (freeModule) { // in Node.js or RingoJS v0.8.0+
-			freeModule.exports = punycode;
-		} else { // in Narwhal or RingoJS v0.7.0-
-			for (key in punycode) {
-				punycode.hasOwnProperty(key) && (freeExports[key] = punycode[key]);
-			}
-		}
-	} else { // in Rhino or a web browser
-		root.punycode = punycode;
-	}
-
-}(this));
-
-}).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],10:[function(_dereq_,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-'use strict';
-
-// If obj.hasOwnProperty has been overridden, then calling
-// obj.hasOwnProperty(prop) will break.
-// See: https://github.com/joyent/node/issues/1707
-function hasOwnProperty(obj, prop) {
-  return Object.prototype.hasOwnProperty.call(obj, prop);
-}
-
-module.exports = function(qs, sep, eq, options) {
-  sep = sep || '&';
-  eq = eq || '=';
-  var obj = {};
-
-  if (typeof qs !== 'string' || qs.length === 0) {
-    return obj;
-  }
-
-  var regexp = /\+/g;
-  qs = qs.split(sep);
-
-  var maxKeys = 1000;
-  if (options && typeof options.maxKeys === 'number') {
-    maxKeys = options.maxKeys;
-  }
-
-  var len = qs.length;
-  // maxKeys <= 0 means that we should not limit keys count
-  if (maxKeys > 0 && len > maxKeys) {
-    len = maxKeys;
-  }
-
-  for (var i = 0; i < len; ++i) {
-    var x = qs[i].replace(regexp, '%20'),
-        idx = x.indexOf(eq),
-        kstr, vstr, k, v;
-
-    if (idx >= 0) {
-      kstr = x.substr(0, idx);
-      vstr = x.substr(idx + 1);
-    } else {
-      kstr = x;
-      vstr = '';
-    }
-
-    k = decodeURIComponent(kstr);
-    v = decodeURIComponent(vstr);
-
-    if (!hasOwnProperty(obj, k)) {
-      obj[k] = v;
-    } else if (isArray(obj[k])) {
-      obj[k].push(v);
-    } else {
-      obj[k] = [obj[k], v];
-    }
-  }
-
-  return obj;
-};
-
-var isArray = Array.isArray || function (xs) {
-  return Object.prototype.toString.call(xs) === '[object Array]';
-};
-
-},{}],11:[function(_dereq_,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-'use strict';
-
-var stringifyPrimitive = function(v) {
-  switch (typeof v) {
-    case 'string':
-      return v;
-
-    case 'boolean':
-      return v ? 'true' : 'false';
-
-    case 'number':
-      return isFinite(v) ? v : '';
-
-    default:
-      return '';
-  }
-};
-
-module.exports = function(obj, sep, eq, name) {
-  sep = sep || '&';
-  eq = eq || '=';
-  if (obj === null) {
-    obj = undefined;
-  }
-
-  if (typeof obj === 'object') {
-    return map(objectKeys(obj), function(k) {
-      var ks = encodeURIComponent(stringifyPrimitive(k)) + eq;
-      if (isArray(obj[k])) {
-        return obj[k].map(function(v) {
-          return ks + encodeURIComponent(stringifyPrimitive(v));
-        }).join(sep);
-      } else {
-        return ks + encodeURIComponent(stringifyPrimitive(obj[k]));
-      }
-    }).join(sep);
-
-  }
-
-  if (!name) return '';
-  return encodeURIComponent(stringifyPrimitive(name)) + eq +
-         encodeURIComponent(stringifyPrimitive(obj));
-};
-
-var isArray = Array.isArray || function (xs) {
-  return Object.prototype.toString.call(xs) === '[object Array]';
-};
-
-function map (xs, f) {
-  if (xs.map) return xs.map(f);
-  var res = [];
-  for (var i = 0; i < xs.length; i++) {
-    res.push(f(xs[i], i));
-  }
-  return res;
-}
-
-var objectKeys = Object.keys || function (obj) {
-  var res = [];
-  for (var key in obj) {
-    if (Object.prototype.hasOwnProperty.call(obj, key)) res.push(key);
-  }
-  return res;
-};
-
-},{}],12:[function(_dereq_,module,exports){
-'use strict';
-
-exports.decode = exports.parse = _dereq_('./decode');
-exports.encode = exports.stringify = _dereq_('./encode');
-
-},{"./decode":10,"./encode":11}],13:[function(_dereq_,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var punycode = _dereq_('punycode');
-
-exports.parse = urlParse;
-exports.resolve = urlResolve;
-exports.resolveObject = urlResolveObject;
-exports.format = urlFormat;
-
-exports.Url = Url;
-
-function Url() {
-  this.protocol = null;
-  this.slashes = null;
-  this.auth = null;
-  this.host = null;
-  this.port = null;
-  this.hostname = null;
-  this.hash = null;
-  this.search = null;
-  this.query = null;
-  this.pathname = null;
-  this.path = null;
-  this.href = null;
-}
-
-// Reference: RFC 3986, RFC 1808, RFC 2396
-
-// define these here so at least they only have to be
-// compiled once on the first module load.
-var protocolPattern = /^([a-z0-9.+-]+:)/i,
-    portPattern = /:[0-9]*$/,
-
-    // RFC 2396: characters reserved for delimiting URLs.
-    // We actually just auto-escape these.
-    delims = ['<', '>', '"', '`', ' ', '\r', '\n', '\t'],
-
-    // RFC 2396: characters not allowed for various reasons.
-    unwise = ['{', '}', '|', '\\', '^', '`'].concat(delims),
-
-    // Allowed by RFCs, but cause of XSS attacks.  Always escape these.
-    autoEscape = ['\''].concat(unwise),
-    // Characters that are never ever allowed in a hostname.
-    // Note that any invalid chars are also handled, but these
-    // are the ones that are *expected* to be seen, so we fast-path
-    // them.
-    nonHostChars = ['%', '/', '?', ';', '#'].concat(autoEscape),
-    hostEndingChars = ['/', '?', '#'],
-    hostnameMaxLen = 255,
-    hostnamePartPattern = /^[a-z0-9A-Z_-]{0,63}$/,
-    hostnamePartStart = /^([a-z0-9A-Z_-]{0,63})(.*)$/,
-    // protocols that can allow "unsafe" and "unwise" chars.
-    unsafeProtocol = {
-      'javascript': true,
-      'javascript:': true
-    },
-    // protocols that never have a hostname.
-    hostlessProtocol = {
-      'javascript': true,
-      'javascript:': true
-    },
-    // protocols that always contain a // bit.
-    slashedProtocol = {
-      'http': true,
-      'https': true,
-      'ftp': true,
-      'gopher': true,
-      'file': true,
-      'http:': true,
-      'https:': true,
-      'ftp:': true,
-      'gopher:': true,
-      'file:': true
-    },
-    querystring = _dereq_('querystring');
-
-function urlParse(url, parseQueryString, slashesDenoteHost) {
-  if (url && isObject(url) && url instanceof Url) return url;
-
-  var u = new Url;
-  u.parse(url, parseQueryString, slashesDenoteHost);
-  return u;
-}
-
-Url.prototype.parse = function(url, parseQueryString, slashesDenoteHost) {
-  if (!isString(url)) {
-    throw new TypeError("Parameter 'url' must be a string, not " + typeof url);
-  }
-
-  var rest = url;
-
-  // trim before proceeding.
-  // This is to support parse stuff like "  http://foo.com  \n"
-  rest = rest.trim();
-
-  var proto = protocolPattern.exec(rest);
-  if (proto) {
-    proto = proto[0];
-    var lowerProto = proto.toLowerCase();
-    this.protocol = lowerProto;
-    rest = rest.substr(proto.length);
-  }
-
-  // figure out if it's got a host
-  // user@server is *always* interpreted as a hostname, and url
-  // resolution will treat //foo/bar as host=foo,path=bar because that's
-  // how the browser resolves relative URLs.
-  if (slashesDenoteHost || proto || rest.match(/^\/\/[^@\/]+@[^@\/]+/)) {
-    var slashes = rest.substr(0, 2) === '//';
-    if (slashes && !(proto && hostlessProtocol[proto])) {
-      rest = rest.substr(2);
-      this.slashes = true;
-    }
-  }
-
-  if (!hostlessProtocol[proto] &&
-      (slashes || (proto && !slashedProtocol[proto]))) {
-
-    // there's a hostname.
-    // the first instance of /, ?, ;, or # ends the host.
-    //
-    // If there is an @ in the hostname, then non-host chars *are* allowed
-    // to the left of the last @ sign, unless some host-ending character
-    // comes *before* the @-sign.
-    // URLs are obnoxious.
-    //
-    // ex:
-    // http://a@b@c/ => user:a@b host:c
-    // http://a@b?@c => user:a host:c path:/?@c
-
-    // v0.12 TODO(isaacs): This is not quite how Chrome does things.
-    // Review our test case against browsers more comprehensively.
-
-    // find the first instance of any hostEndingChars
-    var hostEnd = -1;
-    for (var i = 0; i < hostEndingChars.length; i++) {
-      var hec = rest.indexOf(hostEndingChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd))
-        hostEnd = hec;
-    }
-
-    // at this point, either we have an explicit point where the
-    // auth portion cannot go past, or the last @ char is the decider.
-    var auth, atSign;
-    if (hostEnd === -1) {
-      // atSign can be anywhere.
-      atSign = rest.lastIndexOf('@');
-    } else {
-      // atSign must be in auth portion.
-      // http://a@b/c@d => host:b auth:a path:/c@d
-      atSign = rest.lastIndexOf('@', hostEnd);
-    }
-
-    // Now we have a portion which is definitely the auth.
-    // Pull that off.
-    if (atSign !== -1) {
-      auth = rest.slice(0, atSign);
-      rest = rest.slice(atSign + 1);
-      this.auth = decodeURIComponent(auth);
-    }
-
-    // the host is the remaining to the left of the first non-host char
-    hostEnd = -1;
-    for (var i = 0; i < nonHostChars.length; i++) {
-      var hec = rest.indexOf(nonHostChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd))
-        hostEnd = hec;
-    }
-    // if we still have not hit it, then the entire thing is a host.
-    if (hostEnd === -1)
-      hostEnd = rest.length;
-
-    this.host = rest.slice(0, hostEnd);
-    rest = rest.slice(hostEnd);
-
-    // pull out port.
-    this.parseHost();
-
-    // we've indicated that there is a hostname,
-    // so even if it's empty, it has to be present.
-    this.hostname = this.hostname || '';
-
-    // if hostname begins with [ and ends with ]
-    // assume that it's an IPv6 address.
-    var ipv6Hostname = this.hostname[0] === '[' &&
-        this.hostname[this.hostname.length - 1] === ']';
-
-    // validate a little.
-    if (!ipv6Hostname) {
-      var hostparts = this.hostname.split(/\./);
-      for (var i = 0, l = hostparts.length; i < l; i++) {
-        var part = hostparts[i];
-        if (!part) continue;
-        if (!part.match(hostnamePartPattern)) {
-          var newpart = '';
-          for (var j = 0, k = part.length; j < k; j++) {
-            if (part.charCodeAt(j) > 127) {
-              // we replace non-ASCII char with a temporary placeholder
-              // we need this to make sure size of hostname is not
-              // broken by replacing non-ASCII by nothing
-              newpart += 'x';
-            } else {
-              newpart += part[j];
-            }
-          }
-          // we test again with ASCII char only
-          if (!newpart.match(hostnamePartPattern)) {
-            var validParts = hostparts.slice(0, i);
-            var notHost = hostparts.slice(i + 1);
-            var bit = part.match(hostnamePartStart);
-            if (bit) {
-              validParts.push(bit[1]);
-              notHost.unshift(bit[2]);
-            }
-            if (notHost.length) {
-              rest = '/' + notHost.join('.') + rest;
-            }
-            this.hostname = validParts.join('.');
-            break;
-          }
-        }
-      }
-    }
-
-    if (this.hostname.length > hostnameMaxLen) {
-      this.hostname = '';
-    } else {
-      // hostnames are always lower case.
-      this.hostname = this.hostname.toLowerCase();
-    }
-
-    if (!ipv6Hostname) {
-      // IDNA Support: Returns a puny coded representation of "domain".
-      // It only converts the part of the domain name that
-      // has non ASCII characters. I.e. it dosent matter if
-      // you call it with a domain that already is in ASCII.
-      var domainArray = this.hostname.split('.');
-      var newOut = [];
-      for (var i = 0; i < domainArray.length; ++i) {
-        var s = domainArray[i];
-        newOut.push(s.match(/[^A-Za-z0-9_-]/) ?
-            'xn--' + punycode.encode(s) : s);
-      }
-      this.hostname = newOut.join('.');
-    }
-
-    var p = this.port ? ':' + this.port : '';
-    var h = this.hostname || '';
-    this.host = h + p;
-    this.href += this.host;
-
-    // strip [ and ] from the hostname
-    // the host field still retains them, though
-    if (ipv6Hostname) {
-      this.hostname = this.hostname.substr(1, this.hostname.length - 2);
-      if (rest[0] !== '/') {
-        rest = '/' + rest;
-      }
-    }
-  }
-
-  // now rest is set to the post-host stuff.
-  // chop off any delim chars.
-  if (!unsafeProtocol[lowerProto]) {
-
-    // First, make 100% sure that any "autoEscape" chars get
-    // escaped, even if encodeURIComponent doesn't think they
-    // need to be.
-    for (var i = 0, l = autoEscape.length; i < l; i++) {
-      var ae = autoEscape[i];
-      var esc = encodeURIComponent(ae);
-      if (esc === ae) {
-        esc = escape(ae);
-      }
-      rest = rest.split(ae).join(esc);
-    }
-  }
-
-
-  // chop off from the tail first.
-  var hash = rest.indexOf('#');
-  if (hash !== -1) {
-    // got a fragment string.
-    this.hash = rest.substr(hash);
-    rest = rest.slice(0, hash);
-  }
-  var qm = rest.indexOf('?');
-  if (qm !== -1) {
-    this.search = rest.substr(qm);
-    this.query = rest.substr(qm + 1);
-    if (parseQueryString) {
-      this.query = querystring.parse(this.query);
-    }
-    rest = rest.slice(0, qm);
-  } else if (parseQueryString) {
-    // no query string, but parseQueryString still requested
-    this.search = '';
-    this.query = {};
-  }
-  if (rest) this.pathname = rest;
-  if (slashedProtocol[lowerProto] &&
-      this.hostname && !this.pathname) {
-    this.pathname = '/';
-  }
-
-  //to support http.request
-  if (this.pathname || this.search) {
-    var p = this.pathname || '';
-    var s = this.search || '';
-    this.path = p + s;
-  }
-
-  // finally, reconstruct the href based on what has been validated.
-  this.href = this.format();
-  return this;
-};
-
-// format a parsed object into a url string
-function urlFormat(obj) {
-  // ensure it's an object, and not a string url.
-  // If it's an obj, this is a no-op.
-  // this way, you can call url_format() on strings
-  // to clean up potentially wonky urls.
-  if (isString(obj)) obj = urlParse(obj);
-  if (!(obj instanceof Url)) return Url.prototype.format.call(obj);
-  return obj.format();
-}
-
-Url.prototype.format = function() {
-  var auth = this.auth || '';
-  if (auth) {
-    auth = encodeURIComponent(auth);
-    auth = auth.replace(/%3A/i, ':');
-    auth += '@';
-  }
-
-  var protocol = this.protocol || '',
-      pathname = this.pathname || '',
-      hash = this.hash || '',
-      host = false,
-      query = '';
-
-  if (this.host) {
-    host = auth + this.host;
-  } else if (this.hostname) {
-    host = auth + (this.hostname.indexOf(':') === -1 ?
-        this.hostname :
-        '[' + this.hostname + ']');
-    if (this.port) {
-      host += ':' + this.port;
-    }
-  }
-
-  if (this.query &&
-      isObject(this.query) &&
-      Object.keys(this.query).length) {
-    query = querystring.stringify(this.query);
-  }
-
-  var search = this.search || (query && ('?' + query)) || '';
-
-  if (protocol && protocol.substr(-1) !== ':') protocol += ':';
-
-  // only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
-  // unless they had them to begin with.
-  if (this.slashes ||
-      (!protocol || slashedProtocol[protocol]) && host !== false) {
-    host = '//' + (host || '');
-    if (pathname && pathname.charAt(0) !== '/') pathname = '/' + pathname;
-  } else if (!host) {
-    host = '';
-  }
-
-  if (hash && hash.charAt(0) !== '#') hash = '#' + hash;
-  if (search && search.charAt(0) !== '?') search = '?' + search;
-
-  pathname = pathname.replace(/[?#]/g, function(match) {
-    return encodeURIComponent(match);
-  });
-  search = search.replace('#', '%23');
-
-  return protocol + host + pathname + search + hash;
-};
-
-function urlResolve(source, relative) {
-  return urlParse(source, false, true).resolve(relative);
-}
-
-Url.prototype.resolve = function(relative) {
-  return this.resolveObject(urlParse(relative, false, true)).format();
-};
-
-function urlResolveObject(source, relative) {
-  if (!source) return relative;
-  return urlParse(source, false, true).resolveObject(relative);
-}
-
-Url.prototype.resolveObject = function(relative) {
-  if (isString(relative)) {
-    var rel = new Url();
-    rel.parse(relative, false, true);
-    relative = rel;
-  }
-
-  var result = new Url();
-  Object.keys(this).forEach(function(k) {
-    result[k] = this[k];
-  }, this);
-
-  // hash is always overridden, no matter what.
-  // even href="" will remove it.
-  result.hash = relative.hash;
-
-  // if the relative url is empty, then there's nothing left to do here.
-  if (relative.href === '') {
-    result.href = result.format();
-    return result;
-  }
-
-  // hrefs like //foo/bar always cut to the protocol.
-  if (relative.slashes && !relative.protocol) {
-    // take everything except the protocol from relative
-    Object.keys(relative).forEach(function(k) {
-      if (k !== 'protocol')
-        result[k] = relative[k];
-    });
-
-    //urlParse appends trailing / to urls like http://www.example.com
-    if (slashedProtocol[result.protocol] &&
-        result.hostname && !result.pathname) {
-      result.path = result.pathname = '/';
-    }
-
-    result.href = result.format();
-    return result;
-  }
-
-  if (relative.protocol && relative.protocol !== result.protocol) {
-    // if it's a known url protocol, then changing
-    // the protocol does weird things
-    // first, if it's not file:, then we MUST have a host,
-    // and if there was a path
-    // to begin with, then we MUST have a path.
-    // if it is file:, then the host is dropped,
-    // because that's known to be hostless.
-    // anything else is assumed to be absolute.
-    if (!slashedProtocol[relative.protocol]) {
-      Object.keys(relative).forEach(function(k) {
-        result[k] = relative[k];
-      });
-      result.href = result.format();
-      return result;
-    }
-
-    result.protocol = relative.protocol;
-    if (!relative.host && !hostlessProtocol[relative.protocol]) {
-      var relPath = (relative.pathname || '').split('/');
-      while (relPath.length && !(relative.host = relPath.shift()));
-      if (!relative.host) relative.host = '';
-      if (!relative.hostname) relative.hostname = '';
-      if (relPath[0] !== '') relPath.unshift('');
-      if (relPath.length < 2) relPath.unshift('');
-      result.pathname = relPath.join('/');
-    } else {
-      result.pathname = relative.pathname;
-    }
-    result.search = relative.search;
-    result.query = relative.query;
-    result.host = relative.host || '';
-    result.auth = relative.auth;
-    result.hostname = relative.hostname || relative.host;
-    result.port = relative.port;
-    // to support http.request
-    if (result.pathname || result.search) {
-      var p = result.pathname || '';
-      var s = result.search || '';
-      result.path = p + s;
-    }
-    result.slashes = result.slashes || relative.slashes;
-    result.href = result.format();
-    return result;
-  }
-
-  var isSourceAbs = (result.pathname && result.pathname.charAt(0) === '/'),
-      isRelAbs = (
-          relative.host ||
-          relative.pathname && relative.pathname.charAt(0) === '/'
-      ),
-      mustEndAbs = (isRelAbs || isSourceAbs ||
-                    (result.host && relative.pathname)),
-      removeAllDots = mustEndAbs,
-      srcPath = result.pathname && result.pathname.split('/') || [],
-      relPath = relative.pathname && relative.pathname.split('/') || [],
-      psychotic = result.protocol && !slashedProtocol[result.protocol];
-
-  // if the url is a non-slashed url, then relative
-  // links like ../.. should be able
-  // to crawl up to the hostname, as well.  This is strange.
-  // result.protocol has already been set by now.
-  // Later on, put the first path part into the host field.
-  if (psychotic) {
-    result.hostname = '';
-    result.port = null;
-    if (result.host) {
-      if (srcPath[0] === '') srcPath[0] = result.host;
-      else srcPath.unshift(result.host);
-    }
-    result.host = '';
-    if (relative.protocol) {
-      relative.hostname = null;
-      relative.port = null;
-      if (relative.host) {
-        if (relPath[0] === '') relPath[0] = relative.host;
-        else relPath.unshift(relative.host);
-      }
-      relative.host = null;
-    }
-    mustEndAbs = mustEndAbs && (relPath[0] === '' || srcPath[0] === '');
-  }
-
-  if (isRelAbs) {
-    // it's absolute.
-    result.host = (relative.host || relative.host === '') ?
-                  relative.host : result.host;
-    result.hostname = (relative.hostname || relative.hostname === '') ?
-                      relative.hostname : result.hostname;
-    result.search = relative.search;
-    result.query = relative.query;
-    srcPath = relPath;
-    // fall through to the dot-handling below.
-  } else if (relPath.length) {
-    // it's relative
-    // throw away the existing file, and take the new path instead.
-    if (!srcPath) srcPath = [];
-    srcPath.pop();
-    srcPath = srcPath.concat(relPath);
-    result.search = relative.search;
-    result.query = relative.query;
-  } else if (!isNullOrUndefined(relative.search)) {
-    // just pull out the search.
-    // like href='?foo'.
-    // Put this after the other two cases because it simplifies the booleans
-    if (psychotic) {
-      result.hostname = result.host = srcPath.shift();
-      //occationaly the auth can get stuck only in host
-      //this especialy happens in cases like
-      //url.resolveObject('mailto:local1@domain1', 'local2@domain2')
-      var authInHost = result.host && result.host.indexOf('@') > 0 ?
-                       result.host.split('@') : false;
-      if (authInHost) {
-        result.auth = authInHost.shift();
-        result.host = result.hostname = authInHost.shift();
-      }
-    }
-    result.search = relative.search;
-    result.query = relative.query;
-    //to support http.request
-    if (!isNull(result.pathname) || !isNull(result.search)) {
-      result.path = (result.pathname ? result.pathname : '') +
-                    (result.search ? result.search : '');
-    }
-    result.href = result.format();
-    return result;
-  }
-
-  if (!srcPath.length) {
-    // no path at all.  easy.
-    // we've already handled the other stuff above.
-    result.pathname = null;
-    //to support http.request
-    if (result.search) {
-      result.path = '/' + result.search;
-    } else {
-      result.path = null;
-    }
-    result.href = result.format();
-    return result;
-  }
-
-  // if a url ENDs in . or .., then it must get a trailing slash.
-  // however, if it ends in anything else non-slashy,
-  // then it must NOT get a trailing slash.
-  var last = srcPath.slice(-1)[0];
-  var hasTrailingSlash = (
-      (result.host || relative.host) && (last === '.' || last === '..') ||
-      last === '');
-
-  // strip single dots, resolve double dots to parent dir
-  // if the path tries to go above the root, `up` ends up > 0
-  var up = 0;
-  for (var i = srcPath.length; i >= 0; i--) {
-    last = srcPath[i];
-    if (last == '.') {
-      srcPath.splice(i, 1);
-    } else if (last === '..') {
-      srcPath.splice(i, 1);
-      up++;
-    } else if (up) {
-      srcPath.splice(i, 1);
-      up--;
-    }
-  }
-
-  // if the path is allowed to go above the root, restore leading ..s
-  if (!mustEndAbs && !removeAllDots) {
-    for (; up--; up) {
-      srcPath.unshift('..');
-    }
-  }
-
-  if (mustEndAbs && srcPath[0] !== '' &&
-      (!srcPath[0] || srcPath[0].charAt(0) !== '/')) {
-    srcPath.unshift('');
-  }
-
-  if (hasTrailingSlash && (srcPath.join('/').substr(-1) !== '/')) {
-    srcPath.push('');
-  }
-
-  var isAbsolute = srcPath[0] === '' ||
-      (srcPath[0] && srcPath[0].charAt(0) === '/');
-
-  // put the host back
-  if (psychotic) {
-    result.hostname = result.host = isAbsolute ? '' :
-                                    srcPath.length ? srcPath.shift() : '';
-    //occationaly the auth can get stuck only in host
-    //this especialy happens in cases like
-    //url.resolveObject('mailto:local1@domain1', 'local2@domain2')
-    var authInHost = result.host && result.host.indexOf('@') > 0 ?
-                     result.host.split('@') : false;
-    if (authInHost) {
-      result.auth = authInHost.shift();
-      result.host = result.hostname = authInHost.shift();
-    }
-  }
-
-  mustEndAbs = mustEndAbs || (result.host && srcPath.length);
-
-  if (mustEndAbs && !isAbsolute) {
-    srcPath.unshift('');
-  }
-
-  if (!srcPath.length) {
-    result.pathname = null;
-    result.path = null;
-  } else {
-    result.pathname = srcPath.join('/');
-  }
-
-  //to support request.http
-  if (!isNull(result.pathname) || !isNull(result.search)) {
-    result.path = (result.pathname ? result.pathname : '') +
-                  (result.search ? result.search : '');
-  }
-  result.auth = relative.auth || result.auth;
-  result.slashes = result.slashes || relative.slashes;
-  result.href = result.format();
-  return result;
-};
-
-Url.prototype.parseHost = function() {
-  var host = this.host;
-  var port = portPattern.exec(host);
-  if (port) {
-    port = port[0];
-    if (port !== ':') {
-      this.port = port.substr(1);
-    }
-    host = host.substr(0, host.length - port.length);
-  }
-  if (host) this.hostname = host;
-};
-
-function isString(arg) {
-  return typeof arg === "string";
-}
-
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
-
-function isNull(arg) {
-  return arg === null;
-}
-function isNullOrUndefined(arg) {
-  return  arg == null;
-}
-
-},{"punycode":9,"querystring":12}],14:[function(_dereq_,module,exports){
+},{"util/":7}],6:[function(_dereq_,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],15:[function(_dereq_,module,exports){
+},{}],7:[function(_dereq_,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -8415,8 +6794,486 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-}).call(this,_dereq_("FWaASH"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":14,"FWaASH":8,"inherits":7}],16:[function(_dereq_,module,exports){
+}).call(this,_dereq_("/mnt/ebs1/workspace/fh-js-sdk_release/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"./support/isBuffer":6,"/mnt/ebs1/workspace/fh-js-sdk_release/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":11,"inherits":10}],8:[function(_dereq_,module,exports){
+(function (global){
+/*global window, global*/
+var util = _dereq_("util")
+var assert = _dereq_("assert")
+
+var slice = Array.prototype.slice
+var console
+var times = {}
+
+if (typeof global !== "undefined" && global.console) {
+    console = global.console
+} else if (typeof window !== "undefined" && window.console) {
+    console = window.console
+} else {
+    console = {}
+}
+
+var functions = [
+    [log, "log"]
+    , [info, "info"]
+    , [warn, "warn"]
+    , [error, "error"]
+    , [time, "time"]
+    , [timeEnd, "timeEnd"]
+    , [trace, "trace"]
+    , [dir, "dir"]
+    , [assert, "assert"]
+]
+
+for (var i = 0; i < functions.length; i++) {
+    var tuple = functions[i]
+    var f = tuple[0]
+    var name = tuple[1]
+
+    if (!console[name]) {
+        console[name] = f
+    }
+}
+
+module.exports = console
+
+function log() {}
+
+function info() {
+    console.log.apply(console, arguments)
+}
+
+function warn() {
+    console.log.apply(console, arguments)
+}
+
+function error() {
+    console.warn.apply(console, arguments)
+}
+
+function time(label) {
+    times[label] = Date.now()
+}
+
+function timeEnd(label) {
+    var time = times[label]
+    if (!time) {
+        throw new Error("No such label: " + label)
+    }
+
+    var duration = Date.now() - time
+    console.log(label + ": " + duration + "ms")
+}
+
+function trace() {
+    var err = new Error()
+    err.name = "Trace"
+    err.message = util.format.apply(null, arguments)
+    console.error(err.stack)
+}
+
+function dir(object) {
+    console.log(util.inspect(object) + "\n")
+}
+
+function assert(expression) {
+    if (!expression) {
+        var arr = slice.call(arguments, 1)
+        assert.ok(false, util.format.apply(null, arr))
+    }
+}
+
+}).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"assert":5,"util":13}],9:[function(_dereq_,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+function EventEmitter() {
+  this._events = this._events || {};
+  this._maxListeners = this._maxListeners || undefined;
+}
+module.exports = EventEmitter;
+
+// Backwards-compat with node 0.10.x
+EventEmitter.EventEmitter = EventEmitter;
+
+EventEmitter.prototype._events = undefined;
+EventEmitter.prototype._maxListeners = undefined;
+
+// By default EventEmitters will print a warning if more than 10 listeners are
+// added to it. This is a useful default which helps finding memory leaks.
+EventEmitter.defaultMaxListeners = 10;
+
+// Obviously not all Emitters should be limited to 10. This function allows
+// that to be increased. Set to zero for unlimited.
+EventEmitter.prototype.setMaxListeners = function(n) {
+  if (!isNumber(n) || n < 0 || isNaN(n))
+    throw TypeError('n must be a positive number');
+  this._maxListeners = n;
+  return this;
+};
+
+EventEmitter.prototype.emit = function(type) {
+  var er, handler, len, args, i, listeners;
+
+  if (!this._events)
+    this._events = {};
+
+  // If there is no 'error' event listener then throw.
+  if (type === 'error') {
+    if (!this._events.error ||
+        (isObject(this._events.error) && !this._events.error.length)) {
+      er = arguments[1];
+      if (er instanceof Error) {
+        throw er; // Unhandled 'error' event
+      } else {
+        throw TypeError('Uncaught, unspecified "error" event.');
+      }
+      return false;
+    }
+  }
+
+  handler = this._events[type];
+
+  if (isUndefined(handler))
+    return false;
+
+  if (isFunction(handler)) {
+    switch (arguments.length) {
+      // fast cases
+      case 1:
+        handler.call(this);
+        break;
+      case 2:
+        handler.call(this, arguments[1]);
+        break;
+      case 3:
+        handler.call(this, arguments[1], arguments[2]);
+        break;
+      // slower
+      default:
+        len = arguments.length;
+        args = new Array(len - 1);
+        for (i = 1; i < len; i++)
+          args[i - 1] = arguments[i];
+        handler.apply(this, args);
+    }
+  } else if (isObject(handler)) {
+    len = arguments.length;
+    args = new Array(len - 1);
+    for (i = 1; i < len; i++)
+      args[i - 1] = arguments[i];
+
+    listeners = handler.slice();
+    len = listeners.length;
+    for (i = 0; i < len; i++)
+      listeners[i].apply(this, args);
+  }
+
+  return true;
+};
+
+EventEmitter.prototype.addListener = function(type, listener) {
+  var m;
+
+  if (!isFunction(listener))
+    throw TypeError('listener must be a function');
+
+  if (!this._events)
+    this._events = {};
+
+  // To avoid recursion in the case that type === "newListener"! Before
+  // adding it to the listeners, first emit "newListener".
+  if (this._events.newListener)
+    this.emit('newListener', type,
+              isFunction(listener.listener) ?
+              listener.listener : listener);
+
+  if (!this._events[type])
+    // Optimize the case of one listener. Don't need the extra array object.
+    this._events[type] = listener;
+  else if (isObject(this._events[type]))
+    // If we've already got an array, just append.
+    this._events[type].push(listener);
+  else
+    // Adding the second element, need to change to array.
+    this._events[type] = [this._events[type], listener];
+
+  // Check for listener leak
+  if (isObject(this._events[type]) && !this._events[type].warned) {
+    var m;
+    if (!isUndefined(this._maxListeners)) {
+      m = this._maxListeners;
+    } else {
+      m = EventEmitter.defaultMaxListeners;
+    }
+
+    if (m && m > 0 && this._events[type].length > m) {
+      this._events[type].warned = true;
+      console.error('(node) warning: possible EventEmitter memory ' +
+                    'leak detected. %d listeners added. ' +
+                    'Use emitter.setMaxListeners() to increase limit.',
+                    this._events[type].length);
+      if (typeof console.trace === 'function') {
+        // not supported in IE 10
+        console.trace();
+      }
+    }
+  }
+
+  return this;
+};
+
+EventEmitter.prototype.on = EventEmitter.prototype.addListener;
+
+EventEmitter.prototype.once = function(type, listener) {
+  if (!isFunction(listener))
+    throw TypeError('listener must be a function');
+
+  var fired = false;
+
+  function g() {
+    this.removeListener(type, g);
+
+    if (!fired) {
+      fired = true;
+      listener.apply(this, arguments);
+    }
+  }
+
+  g.listener = listener;
+  this.on(type, g);
+
+  return this;
+};
+
+// emits a 'removeListener' event iff the listener was removed
+EventEmitter.prototype.removeListener = function(type, listener) {
+  var list, position, length, i;
+
+  if (!isFunction(listener))
+    throw TypeError('listener must be a function');
+
+  if (!this._events || !this._events[type])
+    return this;
+
+  list = this._events[type];
+  length = list.length;
+  position = -1;
+
+  if (list === listener ||
+      (isFunction(list.listener) && list.listener === listener)) {
+    delete this._events[type];
+    if (this._events.removeListener)
+      this.emit('removeListener', type, listener);
+
+  } else if (isObject(list)) {
+    for (i = length; i-- > 0;) {
+      if (list[i] === listener ||
+          (list[i].listener && list[i].listener === listener)) {
+        position = i;
+        break;
+      }
+    }
+
+    if (position < 0)
+      return this;
+
+    if (list.length === 1) {
+      list.length = 0;
+      delete this._events[type];
+    } else {
+      list.splice(position, 1);
+    }
+
+    if (this._events.removeListener)
+      this.emit('removeListener', type, listener);
+  }
+
+  return this;
+};
+
+EventEmitter.prototype.removeAllListeners = function(type) {
+  var key, listeners;
+
+  if (!this._events)
+    return this;
+
+  // not listening for removeListener, no need to emit
+  if (!this._events.removeListener) {
+    if (arguments.length === 0)
+      this._events = {};
+    else if (this._events[type])
+      delete this._events[type];
+    return this;
+  }
+
+  // emit removeListener for all listeners on all events
+  if (arguments.length === 0) {
+    for (key in this._events) {
+      if (key === 'removeListener') continue;
+      this.removeAllListeners(key);
+    }
+    this.removeAllListeners('removeListener');
+    this._events = {};
+    return this;
+  }
+
+  listeners = this._events[type];
+
+  if (isFunction(listeners)) {
+    this.removeListener(type, listeners);
+  } else {
+    // LIFO order
+    while (listeners.length)
+      this.removeListener(type, listeners[listeners.length - 1]);
+  }
+  delete this._events[type];
+
+  return this;
+};
+
+EventEmitter.prototype.listeners = function(type) {
+  var ret;
+  if (!this._events || !this._events[type])
+    ret = [];
+  else if (isFunction(this._events[type]))
+    ret = [this._events[type]];
+  else
+    ret = this._events[type].slice();
+  return ret;
+};
+
+EventEmitter.listenerCount = function(emitter, type) {
+  var ret;
+  if (!emitter._events || !emitter._events[type])
+    ret = 0;
+  else if (isFunction(emitter._events[type]))
+    ret = 1;
+  else
+    ret = emitter._events[type].length;
+  return ret;
+};
+
+function isFunction(arg) {
+  return typeof arg === 'function';
+}
+
+function isNumber(arg) {
+  return typeof arg === 'number';
+}
+
+function isObject(arg) {
+  return typeof arg === 'object' && arg !== null;
+}
+
+function isUndefined(arg) {
+  return arg === void 0;
+}
+
+},{}],10:[function(_dereq_,module,exports){
+if (typeof Object.create === 'function') {
+  // implementation from standard node.js 'util' module
+  module.exports = function inherits(ctor, superCtor) {
+    ctor.super_ = superCtor
+    ctor.prototype = Object.create(superCtor.prototype, {
+      constructor: {
+        value: ctor,
+        enumerable: false,
+        writable: true,
+        configurable: true
+      }
+    });
+  };
+} else {
+  // old school shim for old browsers
+  module.exports = function inherits(ctor, superCtor) {
+    ctor.super_ = superCtor
+    var TempCtor = function () {}
+    TempCtor.prototype = superCtor.prototype
+    ctor.prototype = new TempCtor()
+    ctor.prototype.constructor = ctor
+  }
+}
+
+},{}],11:[function(_dereq_,module,exports){
+// shim for using process in browser
+
+var process = module.exports = {};
+
+process.nextTick = (function () {
+    var canSetImmediate = typeof window !== 'undefined'
+    && window.setImmediate;
+    var canPost = typeof window !== 'undefined'
+    && window.postMessage && window.addEventListener
+    ;
+
+    if (canSetImmediate) {
+        return function (f) { return window.setImmediate(f) };
+    }
+
+    if (canPost) {
+        var queue = [];
+        window.addEventListener('message', function (ev) {
+            var source = ev.source;
+            if ((source === window || source === null) && ev.data === 'process-tick') {
+                ev.stopPropagation();
+                if (queue.length > 0) {
+                    var fn = queue.shift();
+                    fn();
+                }
+            }
+        }, true);
+
+        return function nextTick(fn) {
+            queue.push(fn);
+            window.postMessage('process-tick', '*');
+        };
+    }
+
+    return function nextTick(fn) {
+        setTimeout(fn, 0);
+    };
+})();
+
+process.title = 'browser';
+process.browser = true;
+process.env = {};
+process.argv = [];
+
+process.binding = function (name) {
+    throw new Error('process.binding is not supported');
+}
+
+// TODO(shtylman)
+process.cwd = function () { return '/' };
+process.chdir = function (dir) {
+    throw new Error('process.chdir is not supported');
+};
+
+},{}],12:[function(_dereq_,module,exports){
+module.exports=_dereq_(6)
+},{}],13:[function(_dereq_,module,exports){
+module.exports=_dereq_(7)
+},{"./support/isBuffer":12,"/mnt/ebs1/workspace/fh-js-sdk_release/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":11,"inherits":10}],14:[function(_dereq_,module,exports){
 /*
  * loglevel - https://github.com/pimterry/loglevel
  *
@@ -8615,7 +7472,7 @@ function hasOwnProperty(obj, prop) {
     }));
 })();
 
-},{}],17:[function(_dereq_,module,exports){
+},{}],15:[function(_dereq_,module,exports){
 var toString = Object.prototype.toString
 
 module.exports = function(val){
@@ -8646,1352 +7503,16 @@ module.exports = function(val){
   return typeof val
 }
 
-},{}],18:[function(_dereq_,module,exports){
-//     Underscore.js 1.6.0
-//     http://underscorejs.org
-//     (c) 2009-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
-//     Underscore may be freely distributed under the MIT license.
-
-(function() {
-
-  // Baseline setup
-  // --------------
-
-  // Establish the root object, `window` in the browser, or `exports` on the server.
-  var root = this;
-
-  // Save the previous value of the `_` variable.
-  var previousUnderscore = root._;
-
-  // Establish the object that gets returned to break out of a loop iteration.
-  var breaker = {};
-
-  // Save bytes in the minified (but not gzipped) version:
-  var ArrayProto = Array.prototype, ObjProto = Object.prototype, FuncProto = Function.prototype;
-
-  // Create quick reference variables for speed access to core prototypes.
-  var
-    push             = ArrayProto.push,
-    slice            = ArrayProto.slice,
-    concat           = ArrayProto.concat,
-    toString         = ObjProto.toString,
-    hasOwnProperty   = ObjProto.hasOwnProperty;
-
-  // All **ECMAScript 5** native function implementations that we hope to use
-  // are declared here.
-  var
-    nativeForEach      = ArrayProto.forEach,
-    nativeMap          = ArrayProto.map,
-    nativeReduce       = ArrayProto.reduce,
-    nativeReduceRight  = ArrayProto.reduceRight,
-    nativeFilter       = ArrayProto.filter,
-    nativeEvery        = ArrayProto.every,
-    nativeSome         = ArrayProto.some,
-    nativeIndexOf      = ArrayProto.indexOf,
-    nativeLastIndexOf  = ArrayProto.lastIndexOf,
-    nativeIsArray      = Array.isArray,
-    nativeKeys         = Object.keys,
-    nativeBind         = FuncProto.bind;
-
-  // Create a safe reference to the Underscore object for use below.
-  var _ = function(obj) {
-    if (obj instanceof _) return obj;
-    if (!(this instanceof _)) return new _(obj);
-    this._wrapped = obj;
-  };
-
-  // Export the Underscore object for **Node.js**, with
-  // backwards-compatibility for the old `require()` API. If we're in
-  // the browser, add `_` as a global object via a string identifier,
-  // for Closure Compiler "advanced" mode.
-  if (typeof exports !== 'undefined') {
-    if (typeof module !== 'undefined' && module.exports) {
-      exports = module.exports = _;
-    }
-    exports._ = _;
-  } else {
-    root._ = _;
-  }
-
-  // Current version.
-  _.VERSION = '1.6.0';
-
-  // Collection Functions
-  // --------------------
-
-  // The cornerstone, an `each` implementation, aka `forEach`.
-  // Handles objects with the built-in `forEach`, arrays, and raw objects.
-  // Delegates to **ECMAScript 5**'s native `forEach` if available.
-  var each = _.each = _.forEach = function(obj, iterator, context) {
-    if (obj == null) return obj;
-    if (nativeForEach && obj.forEach === nativeForEach) {
-      obj.forEach(iterator, context);
-    } else if (obj.length === +obj.length) {
-      for (var i = 0, length = obj.length; i < length; i++) {
-        if (iterator.call(context, obj[i], i, obj) === breaker) return;
-      }
-    } else {
-      var keys = _.keys(obj);
-      for (var i = 0, length = keys.length; i < length; i++) {
-        if (iterator.call(context, obj[keys[i]], keys[i], obj) === breaker) return;
-      }
-    }
-    return obj;
-  };
-
-  // Return the results of applying the iterator to each element.
-  // Delegates to **ECMAScript 5**'s native `map` if available.
-  _.map = _.collect = function(obj, iterator, context) {
-    var results = [];
-    if (obj == null) return results;
-    if (nativeMap && obj.map === nativeMap) return obj.map(iterator, context);
-    each(obj, function(value, index, list) {
-      results.push(iterator.call(context, value, index, list));
-    });
-    return results;
-  };
-
-  var reduceError = 'Reduce of empty array with no initial value';
-
-  // **Reduce** builds up a single result from a list of values, aka `inject`,
-  // or `foldl`. Delegates to **ECMAScript 5**'s native `reduce` if available.
-  _.reduce = _.foldl = _.inject = function(obj, iterator, memo, context) {
-    var initial = arguments.length > 2;
-    if (obj == null) obj = [];
-    if (nativeReduce && obj.reduce === nativeReduce) {
-      if (context) iterator = _.bind(iterator, context);
-      return initial ? obj.reduce(iterator, memo) : obj.reduce(iterator);
-    }
-    each(obj, function(value, index, list) {
-      if (!initial) {
-        memo = value;
-        initial = true;
-      } else {
-        memo = iterator.call(context, memo, value, index, list);
-      }
-    });
-    if (!initial) throw new TypeError(reduceError);
-    return memo;
-  };
-
-  // The right-associative version of reduce, also known as `foldr`.
-  // Delegates to **ECMAScript 5**'s native `reduceRight` if available.
-  _.reduceRight = _.foldr = function(obj, iterator, memo, context) {
-    var initial = arguments.length > 2;
-    if (obj == null) obj = [];
-    if (nativeReduceRight && obj.reduceRight === nativeReduceRight) {
-      if (context) iterator = _.bind(iterator, context);
-      return initial ? obj.reduceRight(iterator, memo) : obj.reduceRight(iterator);
-    }
-    var length = obj.length;
-    if (length !== +length) {
-      var keys = _.keys(obj);
-      length = keys.length;
-    }
-    each(obj, function(value, index, list) {
-      index = keys ? keys[--length] : --length;
-      if (!initial) {
-        memo = obj[index];
-        initial = true;
-      } else {
-        memo = iterator.call(context, memo, obj[index], index, list);
-      }
-    });
-    if (!initial) throw new TypeError(reduceError);
-    return memo;
-  };
-
-  // Return the first value which passes a truth test. Aliased as `detect`.
-  _.find = _.detect = function(obj, predicate, context) {
-    var result;
-    any(obj, function(value, index, list) {
-      if (predicate.call(context, value, index, list)) {
-        result = value;
-        return true;
-      }
-    });
-    return result;
-  };
-
-  // Return all the elements that pass a truth test.
-  // Delegates to **ECMAScript 5**'s native `filter` if available.
-  // Aliased as `select`.
-  _.filter = _.select = function(obj, predicate, context) {
-    var results = [];
-    if (obj == null) return results;
-    if (nativeFilter && obj.filter === nativeFilter) return obj.filter(predicate, context);
-    each(obj, function(value, index, list) {
-      if (predicate.call(context, value, index, list)) results.push(value);
-    });
-    return results;
-  };
-
-  // Return all the elements for which a truth test fails.
-  _.reject = function(obj, predicate, context) {
-    return _.filter(obj, function(value, index, list) {
-      return !predicate.call(context, value, index, list);
-    }, context);
-  };
-
-  // Determine whether all of the elements match a truth test.
-  // Delegates to **ECMAScript 5**'s native `every` if available.
-  // Aliased as `all`.
-  _.every = _.all = function(obj, predicate, context) {
-    predicate || (predicate = _.identity);
-    var result = true;
-    if (obj == null) return result;
-    if (nativeEvery && obj.every === nativeEvery) return obj.every(predicate, context);
-    each(obj, function(value, index, list) {
-      if (!(result = result && predicate.call(context, value, index, list))) return breaker;
-    });
-    return !!result;
-  };
-
-  // Determine if at least one element in the object matches a truth test.
-  // Delegates to **ECMAScript 5**'s native `some` if available.
-  // Aliased as `any`.
-  var any = _.some = _.any = function(obj, predicate, context) {
-    predicate || (predicate = _.identity);
-    var result = false;
-    if (obj == null) return result;
-    if (nativeSome && obj.some === nativeSome) return obj.some(predicate, context);
-    each(obj, function(value, index, list) {
-      if (result || (result = predicate.call(context, value, index, list))) return breaker;
-    });
-    return !!result;
-  };
-
-  // Determine if the array or object contains a given value (using `===`).
-  // Aliased as `include`.
-  _.contains = _.include = function(obj, target) {
-    if (obj == null) return false;
-    if (nativeIndexOf && obj.indexOf === nativeIndexOf) return obj.indexOf(target) != -1;
-    return any(obj, function(value) {
-      return value === target;
-    });
-  };
-
-  // Invoke a method (with arguments) on every item in a collection.
-  _.invoke = function(obj, method) {
-    var args = slice.call(arguments, 2);
-    var isFunc = _.isFunction(method);
-    return _.map(obj, function(value) {
-      return (isFunc ? method : value[method]).apply(value, args);
-    });
-  };
-
-  // Convenience version of a common use case of `map`: fetching a property.
-  _.pluck = function(obj, key) {
-    return _.map(obj, _.property(key));
-  };
-
-  // Convenience version of a common use case of `filter`: selecting only objects
-  // containing specific `key:value` pairs.
-  _.where = function(obj, attrs) {
-    return _.filter(obj, _.matches(attrs));
-  };
-
-  // Convenience version of a common use case of `find`: getting the first object
-  // containing specific `key:value` pairs.
-  _.findWhere = function(obj, attrs) {
-    return _.find(obj, _.matches(attrs));
-  };
-
-  // Return the maximum element or (element-based computation).
-  // Can't optimize arrays of integers longer than 65,535 elements.
-  // See [WebKit Bug 80797](https://bugs.webkit.org/show_bug.cgi?id=80797)
-  _.max = function(obj, iterator, context) {
-    if (!iterator && _.isArray(obj) && obj[0] === +obj[0] && obj.length < 65535) {
-      return Math.max.apply(Math, obj);
-    }
-    var result = -Infinity, lastComputed = -Infinity;
-    each(obj, function(value, index, list) {
-      var computed = iterator ? iterator.call(context, value, index, list) : value;
-      if (computed > lastComputed) {
-        result = value;
-        lastComputed = computed;
-      }
-    });
-    return result;
-  };
-
-  // Return the minimum element (or element-based computation).
-  _.min = function(obj, iterator, context) {
-    if (!iterator && _.isArray(obj) && obj[0] === +obj[0] && obj.length < 65535) {
-      return Math.min.apply(Math, obj);
-    }
-    var result = Infinity, lastComputed = Infinity;
-    each(obj, function(value, index, list) {
-      var computed = iterator ? iterator.call(context, value, index, list) : value;
-      if (computed < lastComputed) {
-        result = value;
-        lastComputed = computed;
-      }
-    });
-    return result;
-  };
-
-  // Shuffle an array, using the modern version of the
-  // [Fisher-Yates shuffle](http://en.wikipedia.org/wiki/Fisher–Yates_shuffle).
-  _.shuffle = function(obj) {
-    var rand;
-    var index = 0;
-    var shuffled = [];
-    each(obj, function(value) {
-      rand = _.random(index++);
-      shuffled[index - 1] = shuffled[rand];
-      shuffled[rand] = value;
-    });
-    return shuffled;
-  };
-
-  // Sample **n** random values from a collection.
-  // If **n** is not specified, returns a single random element.
-  // The internal `guard` argument allows it to work with `map`.
-  _.sample = function(obj, n, guard) {
-    if (n == null || guard) {
-      if (obj.length !== +obj.length) obj = _.values(obj);
-      return obj[_.random(obj.length - 1)];
-    }
-    return _.shuffle(obj).slice(0, Math.max(0, n));
-  };
-
-  // An internal function to generate lookup iterators.
-  var lookupIterator = function(value) {
-    if (value == null) return _.identity;
-    if (_.isFunction(value)) return value;
-    return _.property(value);
-  };
-
-  // Sort the object's values by a criterion produced by an iterator.
-  _.sortBy = function(obj, iterator, context) {
-    iterator = lookupIterator(iterator);
-    return _.pluck(_.map(obj, function(value, index, list) {
-      return {
-        value: value,
-        index: index,
-        criteria: iterator.call(context, value, index, list)
-      };
-    }).sort(function(left, right) {
-      var a = left.criteria;
-      var b = right.criteria;
-      if (a !== b) {
-        if (a > b || a === void 0) return 1;
-        if (a < b || b === void 0) return -1;
-      }
-      return left.index - right.index;
-    }), 'value');
-  };
-
-  // An internal function used for aggregate "group by" operations.
-  var group = function(behavior) {
-    return function(obj, iterator, context) {
-      var result = {};
-      iterator = lookupIterator(iterator);
-      each(obj, function(value, index) {
-        var key = iterator.call(context, value, index, obj);
-        behavior(result, key, value);
-      });
-      return result;
-    };
-  };
-
-  // Groups the object's values by a criterion. Pass either a string attribute
-  // to group by, or a function that returns the criterion.
-  _.groupBy = group(function(result, key, value) {
-    _.has(result, key) ? result[key].push(value) : result[key] = [value];
-  });
-
-  // Indexes the object's values by a criterion, similar to `groupBy`, but for
-  // when you know that your index values will be unique.
-  _.indexBy = group(function(result, key, value) {
-    result[key] = value;
-  });
-
-  // Counts instances of an object that group by a certain criterion. Pass
-  // either a string attribute to count by, or a function that returns the
-  // criterion.
-  _.countBy = group(function(result, key) {
-    _.has(result, key) ? result[key]++ : result[key] = 1;
-  });
-
-  // Use a comparator function to figure out the smallest index at which
-  // an object should be inserted so as to maintain order. Uses binary search.
-  _.sortedIndex = function(array, obj, iterator, context) {
-    iterator = lookupIterator(iterator);
-    var value = iterator.call(context, obj);
-    var low = 0, high = array.length;
-    while (low < high) {
-      var mid = (low + high) >>> 1;
-      iterator.call(context, array[mid]) < value ? low = mid + 1 : high = mid;
-    }
-    return low;
-  };
-
-  // Safely create a real, live array from anything iterable.
-  _.toArray = function(obj) {
-    if (!obj) return [];
-    if (_.isArray(obj)) return slice.call(obj);
-    if (obj.length === +obj.length) return _.map(obj, _.identity);
-    return _.values(obj);
-  };
-
-  // Return the number of elements in an object.
-  _.size = function(obj) {
-    if (obj == null) return 0;
-    return (obj.length === +obj.length) ? obj.length : _.keys(obj).length;
-  };
-
-  // Array Functions
-  // ---------------
-
-  // Get the first element of an array. Passing **n** will return the first N
-  // values in the array. Aliased as `head` and `take`. The **guard** check
-  // allows it to work with `_.map`.
-  _.first = _.head = _.take = function(array, n, guard) {
-    if (array == null) return void 0;
-    if ((n == null) || guard) return array[0];
-    if (n < 0) return [];
-    return slice.call(array, 0, n);
-  };
-
-  // Returns everything but the last entry of the array. Especially useful on
-  // the arguments object. Passing **n** will return all the values in
-  // the array, excluding the last N. The **guard** check allows it to work with
-  // `_.map`.
-  _.initial = function(array, n, guard) {
-    return slice.call(array, 0, array.length - ((n == null) || guard ? 1 : n));
-  };
-
-  // Get the last element of an array. Passing **n** will return the last N
-  // values in the array. The **guard** check allows it to work with `_.map`.
-  _.last = function(array, n, guard) {
-    if (array == null) return void 0;
-    if ((n == null) || guard) return array[array.length - 1];
-    return slice.call(array, Math.max(array.length - n, 0));
-  };
-
-  // Returns everything but the first entry of the array. Aliased as `tail` and `drop`.
-  // Especially useful on the arguments object. Passing an **n** will return
-  // the rest N values in the array. The **guard**
-  // check allows it to work with `_.map`.
-  _.rest = _.tail = _.drop = function(array, n, guard) {
-    return slice.call(array, (n == null) || guard ? 1 : n);
-  };
-
-  // Trim out all falsy values from an array.
-  _.compact = function(array) {
-    return _.filter(array, _.identity);
-  };
-
-  // Internal implementation of a recursive `flatten` function.
-  var flatten = function(input, shallow, output) {
-    if (shallow && _.every(input, _.isArray)) {
-      return concat.apply(output, input);
-    }
-    each(input, function(value) {
-      if (_.isArray(value) || _.isArguments(value)) {
-        shallow ? push.apply(output, value) : flatten(value, shallow, output);
-      } else {
-        output.push(value);
-      }
-    });
-    return output;
-  };
-
-  // Flatten out an array, either recursively (by default), or just one level.
-  _.flatten = function(array, shallow) {
-    return flatten(array, shallow, []);
-  };
-
-  // Return a version of the array that does not contain the specified value(s).
-  _.without = function(array) {
-    return _.difference(array, slice.call(arguments, 1));
-  };
-
-  // Split an array into two arrays: one whose elements all satisfy the given
-  // predicate, and one whose elements all do not satisfy the predicate.
-  _.partition = function(array, predicate) {
-    var pass = [], fail = [];
-    each(array, function(elem) {
-      (predicate(elem) ? pass : fail).push(elem);
-    });
-    return [pass, fail];
-  };
-
-  // Produce a duplicate-free version of the array. If the array has already
-  // been sorted, you have the option of using a faster algorithm.
-  // Aliased as `unique`.
-  _.uniq = _.unique = function(array, isSorted, iterator, context) {
-    if (_.isFunction(isSorted)) {
-      context = iterator;
-      iterator = isSorted;
-      isSorted = false;
-    }
-    var initial = iterator ? _.map(array, iterator, context) : array;
-    var results = [];
-    var seen = [];
-    each(initial, function(value, index) {
-      if (isSorted ? (!index || seen[seen.length - 1] !== value) : !_.contains(seen, value)) {
-        seen.push(value);
-        results.push(array[index]);
-      }
-    });
-    return results;
-  };
-
-  // Produce an array that contains the union: each distinct element from all of
-  // the passed-in arrays.
-  _.union = function() {
-    return _.uniq(_.flatten(arguments, true));
-  };
-
-  // Produce an array that contains every item shared between all the
-  // passed-in arrays.
-  _.intersection = function(array) {
-    var rest = slice.call(arguments, 1);
-    return _.filter(_.uniq(array), function(item) {
-      return _.every(rest, function(other) {
-        return _.contains(other, item);
-      });
-    });
-  };
-
-  // Take the difference between one array and a number of other arrays.
-  // Only the elements present in just the first array will remain.
-  _.difference = function(array) {
-    var rest = concat.apply(ArrayProto, slice.call(arguments, 1));
-    return _.filter(array, function(value){ return !_.contains(rest, value); });
-  };
-
-  // Zip together multiple lists into a single array -- elements that share
-  // an index go together.
-  _.zip = function() {
-    var length = _.max(_.pluck(arguments, 'length').concat(0));
-    var results = new Array(length);
-    for (var i = 0; i < length; i++) {
-      results[i] = _.pluck(arguments, '' + i);
-    }
-    return results;
-  };
-
-  // Converts lists into objects. Pass either a single array of `[key, value]`
-  // pairs, or two parallel arrays of the same length -- one of keys, and one of
-  // the corresponding values.
-  _.object = function(list, values) {
-    if (list == null) return {};
-    var result = {};
-    for (var i = 0, length = list.length; i < length; i++) {
-      if (values) {
-        result[list[i]] = values[i];
-      } else {
-        result[list[i][0]] = list[i][1];
-      }
-    }
-    return result;
-  };
-
-  // If the browser doesn't supply us with indexOf (I'm looking at you, **MSIE**),
-  // we need this function. Return the position of the first occurrence of an
-  // item in an array, or -1 if the item is not included in the array.
-  // Delegates to **ECMAScript 5**'s native `indexOf` if available.
-  // If the array is large and already in sort order, pass `true`
-  // for **isSorted** to use binary search.
-  _.indexOf = function(array, item, isSorted) {
-    if (array == null) return -1;
-    var i = 0, length = array.length;
-    if (isSorted) {
-      if (typeof isSorted == 'number') {
-        i = (isSorted < 0 ? Math.max(0, length + isSorted) : isSorted);
-      } else {
-        i = _.sortedIndex(array, item);
-        return array[i] === item ? i : -1;
-      }
-    }
-    if (nativeIndexOf && array.indexOf === nativeIndexOf) return array.indexOf(item, isSorted);
-    for (; i < length; i++) if (array[i] === item) return i;
-    return -1;
-  };
-
-  // Delegates to **ECMAScript 5**'s native `lastIndexOf` if available.
-  _.lastIndexOf = function(array, item, from) {
-    if (array == null) return -1;
-    var hasIndex = from != null;
-    if (nativeLastIndexOf && array.lastIndexOf === nativeLastIndexOf) {
-      return hasIndex ? array.lastIndexOf(item, from) : array.lastIndexOf(item);
-    }
-    var i = (hasIndex ? from : array.length);
-    while (i--) if (array[i] === item) return i;
-    return -1;
-  };
-
-  // Generate an integer Array containing an arithmetic progression. A port of
-  // the native Python `range()` function. See
-  // [the Python documentation](http://docs.python.org/library/functions.html#range).
-  _.range = function(start, stop, step) {
-    if (arguments.length <= 1) {
-      stop = start || 0;
-      start = 0;
-    }
-    step = arguments[2] || 1;
-
-    var length = Math.max(Math.ceil((stop - start) / step), 0);
-    var idx = 0;
-    var range = new Array(length);
-
-    while(idx < length) {
-      range[idx++] = start;
-      start += step;
-    }
-
-    return range;
-  };
-
-  // Function (ahem) Functions
-  // ------------------
-
-  // Reusable constructor function for prototype setting.
-  var ctor = function(){};
-
-  // Create a function bound to a given object (assigning `this`, and arguments,
-  // optionally). Delegates to **ECMAScript 5**'s native `Function.bind` if
-  // available.
-  _.bind = function(func, context) {
-    var args, bound;
-    if (nativeBind && func.bind === nativeBind) return nativeBind.apply(func, slice.call(arguments, 1));
-    if (!_.isFunction(func)) throw new TypeError;
-    args = slice.call(arguments, 2);
-    return bound = function() {
-      if (!(this instanceof bound)) return func.apply(context, args.concat(slice.call(arguments)));
-      ctor.prototype = func.prototype;
-      var self = new ctor;
-      ctor.prototype = null;
-      var result = func.apply(self, args.concat(slice.call(arguments)));
-      if (Object(result) === result) return result;
-      return self;
-    };
-  };
-
-  // Partially apply a function by creating a version that has had some of its
-  // arguments pre-filled, without changing its dynamic `this` context. _ acts
-  // as a placeholder, allowing any combination of arguments to be pre-filled.
-  _.partial = function(func) {
-    var boundArgs = slice.call(arguments, 1);
-    return function() {
-      var position = 0;
-      var args = boundArgs.slice();
-      for (var i = 0, length = args.length; i < length; i++) {
-        if (args[i] === _) args[i] = arguments[position++];
-      }
-      while (position < arguments.length) args.push(arguments[position++]);
-      return func.apply(this, args);
-    };
-  };
-
-  // Bind a number of an object's methods to that object. Remaining arguments
-  // are the method names to be bound. Useful for ensuring that all callbacks
-  // defined on an object belong to it.
-  _.bindAll = function(obj) {
-    var funcs = slice.call(arguments, 1);
-    if (funcs.length === 0) throw new Error('bindAll must be passed function names');
-    each(funcs, function(f) { obj[f] = _.bind(obj[f], obj); });
-    return obj;
-  };
-
-  // Memoize an expensive function by storing its results.
-  _.memoize = function(func, hasher) {
-    var memo = {};
-    hasher || (hasher = _.identity);
-    return function() {
-      var key = hasher.apply(this, arguments);
-      return _.has(memo, key) ? memo[key] : (memo[key] = func.apply(this, arguments));
-    };
-  };
-
-  // Delays a function for the given number of milliseconds, and then calls
-  // it with the arguments supplied.
-  _.delay = function(func, wait) {
-    var args = slice.call(arguments, 2);
-    return setTimeout(function(){ return func.apply(null, args); }, wait);
-  };
-
-  // Defers a function, scheduling it to run after the current call stack has
-  // cleared.
-  _.defer = function(func) {
-    return _.delay.apply(_, [func, 1].concat(slice.call(arguments, 1)));
-  };
-
-  // Returns a function, that, when invoked, will only be triggered at most once
-  // during a given window of time. Normally, the throttled function will run
-  // as much as it can, without ever going more than once per `wait` duration;
-  // but if you'd like to disable the execution on the leading edge, pass
-  // `{leading: false}`. To disable execution on the trailing edge, ditto.
-  _.throttle = function(func, wait, options) {
-    var context, args, result;
-    var timeout = null;
-    var previous = 0;
-    options || (options = {});
-    var later = function() {
-      previous = options.leading === false ? 0 : _.now();
-      timeout = null;
-      result = func.apply(context, args);
-      context = args = null;
-    };
-    return function() {
-      var now = _.now();
-      if (!previous && options.leading === false) previous = now;
-      var remaining = wait - (now - previous);
-      context = this;
-      args = arguments;
-      if (remaining <= 0) {
-        clearTimeout(timeout);
-        timeout = null;
-        previous = now;
-        result = func.apply(context, args);
-        context = args = null;
-      } else if (!timeout && options.trailing !== false) {
-        timeout = setTimeout(later, remaining);
-      }
-      return result;
-    };
-  };
-
-  // Returns a function, that, as long as it continues to be invoked, will not
-  // be triggered. The function will be called after it stops being called for
-  // N milliseconds. If `immediate` is passed, trigger the function on the
-  // leading edge, instead of the trailing.
-  _.debounce = function(func, wait, immediate) {
-    var timeout, args, context, timestamp, result;
-
-    var later = function() {
-      var last = _.now() - timestamp;
-      if (last < wait) {
-        timeout = setTimeout(later, wait - last);
-      } else {
-        timeout = null;
-        if (!immediate) {
-          result = func.apply(context, args);
-          context = args = null;
-        }
-      }
-    };
-
-    return function() {
-      context = this;
-      args = arguments;
-      timestamp = _.now();
-      var callNow = immediate && !timeout;
-      if (!timeout) {
-        timeout = setTimeout(later, wait);
-      }
-      if (callNow) {
-        result = func.apply(context, args);
-        context = args = null;
-      }
-
-      return result;
-    };
-  };
-
-  // Returns a function that will be executed at most one time, no matter how
-  // often you call it. Useful for lazy initialization.
-  _.once = function(func) {
-    var ran = false, memo;
-    return function() {
-      if (ran) return memo;
-      ran = true;
-      memo = func.apply(this, arguments);
-      func = null;
-      return memo;
-    };
-  };
-
-  // Returns the first function passed as an argument to the second,
-  // allowing you to adjust arguments, run code before and after, and
-  // conditionally execute the original function.
-  _.wrap = function(func, wrapper) {
-    return _.partial(wrapper, func);
-  };
-
-  // Returns a function that is the composition of a list of functions, each
-  // consuming the return value of the function that follows.
-  _.compose = function() {
-    var funcs = arguments;
-    return function() {
-      var args = arguments;
-      for (var i = funcs.length - 1; i >= 0; i--) {
-        args = [funcs[i].apply(this, args)];
-      }
-      return args[0];
-    };
-  };
-
-  // Returns a function that will only be executed after being called N times.
-  _.after = function(times, func) {
-    return function() {
-      if (--times < 1) {
-        return func.apply(this, arguments);
-      }
-    };
-  };
-
-  // Object Functions
-  // ----------------
-
-  // Retrieve the names of an object's properties.
-  // Delegates to **ECMAScript 5**'s native `Object.keys`
-  _.keys = function(obj) {
-    if (!_.isObject(obj)) return [];
-    if (nativeKeys) return nativeKeys(obj);
-    var keys = [];
-    for (var key in obj) if (_.has(obj, key)) keys.push(key);
-    return keys;
-  };
-
-  // Retrieve the values of an object's properties.
-  _.values = function(obj) {
-    var keys = _.keys(obj);
-    var length = keys.length;
-    var values = new Array(length);
-    for (var i = 0; i < length; i++) {
-      values[i] = obj[keys[i]];
-    }
-    return values;
-  };
-
-  // Convert an object into a list of `[key, value]` pairs.
-  _.pairs = function(obj) {
-    var keys = _.keys(obj);
-    var length = keys.length;
-    var pairs = new Array(length);
-    for (var i = 0; i < length; i++) {
-      pairs[i] = [keys[i], obj[keys[i]]];
-    }
-    return pairs;
-  };
-
-  // Invert the keys and values of an object. The values must be serializable.
-  _.invert = function(obj) {
-    var result = {};
-    var keys = _.keys(obj);
-    for (var i = 0, length = keys.length; i < length; i++) {
-      result[obj[keys[i]]] = keys[i];
-    }
-    return result;
-  };
-
-  // Return a sorted list of the function names available on the object.
-  // Aliased as `methods`
-  _.functions = _.methods = function(obj) {
-    var names = [];
-    for (var key in obj) {
-      if (_.isFunction(obj[key])) names.push(key);
-    }
-    return names.sort();
-  };
-
-  // Extend a given object with all the properties in passed-in object(s).
-  _.extend = function(obj) {
-    each(slice.call(arguments, 1), function(source) {
-      if (source) {
-        for (var prop in source) {
-          obj[prop] = source[prop];
-        }
-      }
-    });
-    return obj;
-  };
-
-  // Return a copy of the object only containing the whitelisted properties.
-  _.pick = function(obj) {
-    var copy = {};
-    var keys = concat.apply(ArrayProto, slice.call(arguments, 1));
-    each(keys, function(key) {
-      if (key in obj) copy[key] = obj[key];
-    });
-    return copy;
-  };
-
-   // Return a copy of the object without the blacklisted properties.
-  _.omit = function(obj) {
-    var copy = {};
-    var keys = concat.apply(ArrayProto, slice.call(arguments, 1));
-    for (var key in obj) {
-      if (!_.contains(keys, key)) copy[key] = obj[key];
-    }
-    return copy;
-  };
-
-  // Fill in a given object with default properties.
-  _.defaults = function(obj) {
-    each(slice.call(arguments, 1), function(source) {
-      if (source) {
-        for (var prop in source) {
-          if (obj[prop] === void 0) obj[prop] = source[prop];
-        }
-      }
-    });
-    return obj;
-  };
-
-  // Create a (shallow-cloned) duplicate of an object.
-  _.clone = function(obj) {
-    if (!_.isObject(obj)) return obj;
-    return _.isArray(obj) ? obj.slice() : _.extend({}, obj);
-  };
-
-  // Invokes interceptor with the obj, and then returns obj.
-  // The primary purpose of this method is to "tap into" a method chain, in
-  // order to perform operations on intermediate results within the chain.
-  _.tap = function(obj, interceptor) {
-    interceptor(obj);
-    return obj;
-  };
-
-  // Internal recursive comparison function for `isEqual`.
-  var eq = function(a, b, aStack, bStack) {
-    // Identical objects are equal. `0 === -0`, but they aren't identical.
-    // See the [Harmony `egal` proposal](http://wiki.ecmascript.org/doku.php?id=harmony:egal).
-    if (a === b) return a !== 0 || 1 / a == 1 / b;
-    // A strict comparison is necessary because `null == undefined`.
-    if (a == null || b == null) return a === b;
-    // Unwrap any wrapped objects.
-    if (a instanceof _) a = a._wrapped;
-    if (b instanceof _) b = b._wrapped;
-    // Compare `[[Class]]` names.
-    var className = toString.call(a);
-    if (className != toString.call(b)) return false;
-    switch (className) {
-      // Strings, numbers, dates, and booleans are compared by value.
-      case '[object String]':
-        // Primitives and their corresponding object wrappers are equivalent; thus, `"5"` is
-        // equivalent to `new String("5")`.
-        return a == String(b);
-      case '[object Number]':
-        // `NaN`s are equivalent, but non-reflexive. An `egal` comparison is performed for
-        // other numeric values.
-        return a != +a ? b != +b : (a == 0 ? 1 / a == 1 / b : a == +b);
-      case '[object Date]':
-      case '[object Boolean]':
-        // Coerce dates and booleans to numeric primitive values. Dates are compared by their
-        // millisecond representations. Note that invalid dates with millisecond representations
-        // of `NaN` are not equivalent.
-        return +a == +b;
-      // RegExps are compared by their source patterns and flags.
-      case '[object RegExp]':
-        return a.source == b.source &&
-               a.global == b.global &&
-               a.multiline == b.multiline &&
-               a.ignoreCase == b.ignoreCase;
-    }
-    if (typeof a != 'object' || typeof b != 'object') return false;
-    // Assume equality for cyclic structures. The algorithm for detecting cyclic
-    // structures is adapted from ES 5.1 section 15.12.3, abstract operation `JO`.
-    var length = aStack.length;
-    while (length--) {
-      // Linear search. Performance is inversely proportional to the number of
-      // unique nested structures.
-      if (aStack[length] == a) return bStack[length] == b;
-    }
-    // Objects with different constructors are not equivalent, but `Object`s
-    // from different frames are.
-    var aCtor = a.constructor, bCtor = b.constructor;
-    if (aCtor !== bCtor && !(_.isFunction(aCtor) && (aCtor instanceof aCtor) &&
-                             _.isFunction(bCtor) && (bCtor instanceof bCtor))
-                        && ('constructor' in a && 'constructor' in b)) {
-      return false;
-    }
-    // Add the first object to the stack of traversed objects.
-    aStack.push(a);
-    bStack.push(b);
-    var size = 0, result = true;
-    // Recursively compare objects and arrays.
-    if (className == '[object Array]') {
-      // Compare array lengths to determine if a deep comparison is necessary.
-      size = a.length;
-      result = size == b.length;
-      if (result) {
-        // Deep compare the contents, ignoring non-numeric properties.
-        while (size--) {
-          if (!(result = eq(a[size], b[size], aStack, bStack))) break;
-        }
-      }
-    } else {
-      // Deep compare objects.
-      for (var key in a) {
-        if (_.has(a, key)) {
-          // Count the expected number of properties.
-          size++;
-          // Deep compare each member.
-          if (!(result = _.has(b, key) && eq(a[key], b[key], aStack, bStack))) break;
-        }
-      }
-      // Ensure that both objects contain the same number of properties.
-      if (result) {
-        for (key in b) {
-          if (_.has(b, key) && !(size--)) break;
-        }
-        result = !size;
-      }
-    }
-    // Remove the first object from the stack of traversed objects.
-    aStack.pop();
-    bStack.pop();
-    return result;
-  };
-
-  // Perform a deep comparison to check if two objects are equal.
-  _.isEqual = function(a, b) {
-    return eq(a, b, [], []);
-  };
-
-  // Is a given array, string, or object empty?
-  // An "empty" object has no enumerable own-properties.
-  _.isEmpty = function(obj) {
-    if (obj == null) return true;
-    if (_.isArray(obj) || _.isString(obj)) return obj.length === 0;
-    for (var key in obj) if (_.has(obj, key)) return false;
-    return true;
-  };
-
-  // Is a given value a DOM element?
-  _.isElement = function(obj) {
-    return !!(obj && obj.nodeType === 1);
-  };
-
-  // Is a given value an array?
-  // Delegates to ECMA5's native Array.isArray
-  _.isArray = nativeIsArray || function(obj) {
-    return toString.call(obj) == '[object Array]';
-  };
-
-  // Is a given variable an object?
-  _.isObject = function(obj) {
-    return obj === Object(obj);
-  };
-
-  // Add some isType methods: isArguments, isFunction, isString, isNumber, isDate, isRegExp.
-  each(['Arguments', 'Function', 'String', 'Number', 'Date', 'RegExp'], function(name) {
-    _['is' + name] = function(obj) {
-      return toString.call(obj) == '[object ' + name + ']';
-    };
-  });
-
-  // Define a fallback version of the method in browsers (ahem, IE), where
-  // there isn't any inspectable "Arguments" type.
-  if (!_.isArguments(arguments)) {
-    _.isArguments = function(obj) {
-      return !!(obj && _.has(obj, 'callee'));
-    };
-  }
-
-  // Optimize `isFunction` if appropriate.
-  if (typeof (/./) !== 'function') {
-    _.isFunction = function(obj) {
-      return typeof obj === 'function';
-    };
-  }
-
-  // Is a given object a finite number?
-  _.isFinite = function(obj) {
-    return isFinite(obj) && !isNaN(parseFloat(obj));
-  };
-
-  // Is the given value `NaN`? (NaN is the only number which does not equal itself).
-  _.isNaN = function(obj) {
-    return _.isNumber(obj) && obj != +obj;
-  };
-
-  // Is a given value a boolean?
-  _.isBoolean = function(obj) {
-    return obj === true || obj === false || toString.call(obj) == '[object Boolean]';
-  };
-
-  // Is a given value equal to null?
-  _.isNull = function(obj) {
-    return obj === null;
-  };
-
-  // Is a given variable undefined?
-  _.isUndefined = function(obj) {
-    return obj === void 0;
-  };
-
-  // Shortcut function for checking if an object has a given property directly
-  // on itself (in other words, not on a prototype).
-  _.has = function(obj, key) {
-    return hasOwnProperty.call(obj, key);
-  };
-
-  // Utility Functions
-  // -----------------
-
-  // Run Underscore.js in *noConflict* mode, returning the `_` variable to its
-  // previous owner. Returns a reference to the Underscore object.
-  _.noConflict = function() {
-    root._ = previousUnderscore;
-    return this;
-  };
-
-  // Keep the identity function around for default iterators.
-  _.identity = function(value) {
-    return value;
-  };
-
-  _.constant = function(value) {
-    return function () {
-      return value;
-    };
-  };
-
-  _.property = function(key) {
-    return function(obj) {
-      return obj[key];
-    };
-  };
-
-  // Returns a predicate for checking whether an object has a given set of `key:value` pairs.
-  _.matches = function(attrs) {
-    return function(obj) {
-      if (obj === attrs) return true; //avoid comparing an object to itself.
-      for (var key in attrs) {
-        if (attrs[key] !== obj[key])
-          return false;
-      }
-      return true;
+},{}],16:[function(_dereq_,module,exports){
+if ("function" !== typeof Array.prototype.forEach) {
+  // IE8 doesn't have forEach
+  Array.prototype.forEach = function (iter) {
+    var i;
+    for (i = 0; i < this.length; i += 1) {
+      iter.apply(this, [this[i], i, this]);
     }
   };
-
-  // Run a function **n** times.
-  _.times = function(n, iterator, context) {
-    var accum = Array(Math.max(0, n));
-    for (var i = 0; i < n; i++) accum[i] = iterator.call(context, i);
-    return accum;
-  };
-
-  // Return a random integer between min and max (inclusive).
-  _.random = function(min, max) {
-    if (max == null) {
-      max = min;
-      min = 0;
-    }
-    return min + Math.floor(Math.random() * (max - min + 1));
-  };
-
-  // A (possibly faster) way to get the current timestamp as an integer.
-  _.now = Date.now || function() { return new Date().getTime(); };
-
-  // List of HTML entities for escaping.
-  var entityMap = {
-    escape: {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#x27;'
-    }
-  };
-  entityMap.unescape = _.invert(entityMap.escape);
-
-  // Regexes containing the keys and values listed immediately above.
-  var entityRegexes = {
-    escape:   new RegExp('[' + _.keys(entityMap.escape).join('') + ']', 'g'),
-    unescape: new RegExp('(' + _.keys(entityMap.unescape).join('|') + ')', 'g')
-  };
-
-  // Functions for escaping and unescaping strings to/from HTML interpolation.
-  _.each(['escape', 'unescape'], function(method) {
-    _[method] = function(string) {
-      if (string == null) return '';
-      return ('' + string).replace(entityRegexes[method], function(match) {
-        return entityMap[method][match];
-      });
-    };
-  });
-
-  // If the value of the named `property` is a function then invoke it with the
-  // `object` as context; otherwise, return it.
-  _.result = function(object, property) {
-    if (object == null) return void 0;
-    var value = object[property];
-    return _.isFunction(value) ? value.call(object) : value;
-  };
-
-  // Add your own custom functions to the Underscore object.
-  _.mixin = function(obj) {
-    each(_.functions(obj), function(name) {
-      var func = _[name] = obj[name];
-      _.prototype[name] = function() {
-        var args = [this._wrapped];
-        push.apply(args, arguments);
-        return result.call(this, func.apply(_, args));
-      };
-    });
-  };
-
-  // Generate a unique integer id (unique within the entire client session).
-  // Useful for temporary DOM ids.
-  var idCounter = 0;
-  _.uniqueId = function(prefix) {
-    var id = ++idCounter + '';
-    return prefix ? prefix + id : id;
-  };
-
-  // By default, Underscore uses ERB-style template delimiters, change the
-  // following template settings to use alternative delimiters.
-  _.templateSettings = {
-    evaluate    : /<%([\s\S]+?)%>/g,
-    interpolate : /<%=([\s\S]+?)%>/g,
-    escape      : /<%-([\s\S]+?)%>/g
-  };
-
-  // When customizing `templateSettings`, if you don't want to define an
-  // interpolation, evaluation or escaping regex, we need one that is
-  // guaranteed not to match.
-  var noMatch = /(.)^/;
-
-  // Certain characters need to be escaped so that they can be put into a
-  // string literal.
-  var escapes = {
-    "'":      "'",
-    '\\':     '\\',
-    '\r':     'r',
-    '\n':     'n',
-    '\t':     't',
-    '\u2028': 'u2028',
-    '\u2029': 'u2029'
-  };
-
-  var escaper = /\\|'|\r|\n|\t|\u2028|\u2029/g;
-
-  // JavaScript micro-templating, similar to John Resig's implementation.
-  // Underscore templating handles arbitrary delimiters, preserves whitespace,
-  // and correctly escapes quotes within interpolated code.
-  _.template = function(text, data, settings) {
-    var render;
-    settings = _.defaults({}, settings, _.templateSettings);
-
-    // Combine delimiters into one regular expression via alternation.
-    var matcher = new RegExp([
-      (settings.escape || noMatch).source,
-      (settings.interpolate || noMatch).source,
-      (settings.evaluate || noMatch).source
-    ].join('|') + '|$', 'g');
-
-    // Compile the template source, escaping string literals appropriately.
-    var index = 0;
-    var source = "__p+='";
-    text.replace(matcher, function(match, escape, interpolate, evaluate, offset) {
-      source += text.slice(index, offset)
-        .replace(escaper, function(match) { return '\\' + escapes[match]; });
-
-      if (escape) {
-        source += "'+\n((__t=(" + escape + "))==null?'':_.escape(__t))+\n'";
-      }
-      if (interpolate) {
-        source += "'+\n((__t=(" + interpolate + "))==null?'':__t)+\n'";
-      }
-      if (evaluate) {
-        source += "';\n" + evaluate + "\n__p+='";
-      }
-      index = offset + match.length;
-      return match;
-    });
-    source += "';\n";
-
-    // If a variable is not specified, place data values in local scope.
-    if (!settings.variable) source = 'with(obj||{}){\n' + source + '}\n';
-
-    source = "var __t,__p='',__j=Array.prototype.join," +
-      "print=function(){__p+=__j.call(arguments,'');};\n" +
-      source + "return __p;\n";
-
-    try {
-      render = new Function(settings.variable || 'obj', '_', source);
-    } catch (e) {
-      e.source = source;
-      throw e;
-    }
-
-    if (data) return render(data, _);
-    var template = function(data) {
-      return render.call(this, data, _);
-    };
-
-    // Provide the compiled function source as a convenience for precompilation.
-    template.source = 'function(' + (settings.variable || 'obj') + '){\n' + source + '}';
-
-    return template;
-  };
-
-  // Add a "chain" function, which will delegate to the wrapper.
-  _.chain = function(obj) {
-    return _(obj).chain();
-  };
-
-  // OOP
-  // ---------------
-  // If Underscore is called as a function, it returns a wrapped object that
-  // can be used OO-style. This wrapper holds altered versions of all the
-  // underscore functions. Wrapped objects may be chained.
-
-  // Helper function to continue chaining intermediate results.
-  var result = function(obj) {
-    return this._chain ? _(obj).chain() : obj;
-  };
-
-  // Add all of the Underscore functions to the wrapper object.
-  _.mixin(_);
-
-  // Add all mutator Array functions to the wrapper.
-  each(['pop', 'push', 'reverse', 'shift', 'sort', 'splice', 'unshift'], function(name) {
-    var method = ArrayProto[name];
-    _.prototype[name] = function() {
-      var obj = this._wrapped;
-      method.apply(obj, arguments);
-      if ((name == 'shift' || name == 'splice') && obj.length === 0) delete obj[0];
-      return result.call(this, obj);
-    };
-  });
-
-  // Add all accessor Array functions to the wrapper.
-  each(['concat', 'join', 'slice'], function(name) {
-    var method = ArrayProto[name];
-    _.prototype[name] = function() {
-      return result.call(this, method.apply(this._wrapped, arguments));
-    };
-  });
-
-  _.extend(_.prototype, {
-
-    // Start chaining a wrapped Underscore object.
-    chain: function() {
-      this._chain = true;
-      return this;
-    },
-
-    // Extracts the result from a wrapped and chained object.
-    value: function() {
-      return this._wrapped;
-    }
-
-  });
-
-  // AMD registration happens at the end for compatibility with AMD loaders
-  // that may not enforce next-turn semantics on modules. Even though general
-  // practice for AMD registration is to be anonymous, underscore registers
-  // as a named module because, like jQuery, it is a base library that is
-  // popular enough to be bundled in a third party lib, but not be part of
-  // an AMD load request. Those cases could generate an error when an
-  // anonymous define() is called outside of a loader request.
-  if (typeof define === 'function' && define.amd) {
-    define('underscore', [], function() {
-      return _;
-    });
-  }
-}).call(this);
-
-},{}],19:[function(_dereq_,module,exports){
+}
 var constants = _dereq_("./modules/constants");
 var events = _dereq_("./modules/events");
 var logger = _dereq_("./modules/logger");
@@ -10005,35 +7526,30 @@ var api_hash = _dereq_("./modules/api_hash");
 var api_sync = _dereq_("./modules/sync-cli");
 var api_mbaas = _dereq_("./modules/api_mbaas");
 var api_cloud = _dereq_("./modules/api_cloud");
-var api_push = _dereq_("./modules/api_push");
 var fhparams = _dereq_("./modules/fhparams");
 var appProps = _dereq_("./modules/appProps");
 var device = _dereq_("./modules/device");
 
-var defaultFail = function(msg, error) {
+var defaultFail = function(msg, error){
   logger.error(msg + ":" + JSON.stringify(error));
 };
 
-var addListener = function(type, listener) {
+var addListener = function(type, listener){
   events.addListener(type, listener);
-  if (type === constants.INIT_EVENT) {
+  if(type === constants.INIT_EVENT){
     //for fhinit event, need to check the status of cloud and may need to fire the listener immediately.
-    if (cloud.isReady()) {
-      listener(null, {
-        host: cloud.getCloudHostUrl()
-      });
-    } else if (cloud.getInitError()) {
+    if(cloud.isReady()){
+      listener(null, {host: cloud.getCloudHostUrl()});
+    } else if(cloud.getInitError()){
       listener(cloud.getInitError());
     }
   }
 };
 
-var once = function(type, listener) {
-  if (type === constants.INIT_EVENT && cloud.isReady()) {
-    listener(null, {
-      host: cloud.getCloudHostUrl()
-    });
-  } else if (type === constants.INIT_EVENT && cloud.getInitError()) {
+var once = function(type, listener){
+  if(type === constants.INIT_EVENT && cloud.isReady()){
+    listener(null, {host: cloud.getCloudHostUrl()});
+  } else if(type === constants.INIT_EVENT && cloud.getInitError()){
     listener(cloud.getInitError());
   } else {
     events.once(type, listener);
@@ -10041,15 +7557,15 @@ var once = function(type, listener) {
 };
 
 //Legacy shim. Init hapens based on fhconfig.json or, for v2, global var called fh_app_props which is injected as part of the index.html wrapper
-var init = function(opts, success, fail) {
+var init = function(opts, success, fail){
   logger.warn("$fh.init will be deprecated soon");
-  cloud.ready(function(err, host) {
-    if (err) {
-      if (typeof fail === "function") {
+  cloud.ready(function(err, host){
+    if(err){
+      if(typeof fail === "function"){
         return fail(err);
       }
     } else {
-      if (typeof success === "function") {
+      if(typeof success === "function"){
         success(host.host);
       }
     }
@@ -10064,22 +7580,17 @@ fh.cloud = api_cloud;
 fh.sec = api_sec;
 fh.hash = api_hash;
 fh.sync = api_sync;
-fh.push = api_push;
 fh.ajax = fh.__ajax = ajax;
 fh.mbaas = api_mbaas;
 fh._getDeviceId = device.getDeviceId;
 fh.fh_timeout = 60000; //keep backward compatible
 
-fh.getCloudURL = function() {
+fh.getCloudURL = function(){
   return cloud.getCloudHostUrl();
 };
 
-fh.getFHParams = function() {
+fh.getFHParams = function(){
   return fhparams.buildFHParams();
-};
-
-fh.getFHHeaders = function() {
-  return fhparams.getFHHeaders();
 };
 
 //events
@@ -10087,28 +7598,24 @@ fh.addListener = addListener;
 fh.on = addListener;
 fh.once = once;
 var methods = ["removeListener", "removeAllListeners", "setMaxListeners", "listeners", "emit"];
-for (var i = 0; i < methods.length; i++) {
+for(var i=0;i<methods.length;i++){
   fh[methods[i]] = events[methods[i]];
 }
 
 //keep backward compatibility
-fh.on(constants.INIT_EVENT, function(err, host) {
-  if (err) {
+fh.on(constants.INIT_EVENT, function(err, host){
+  if(err){
     fh.cloud_props = {};
     fh.app_props = {};
   } else {
-    fh.cloud_props = {
-      hosts: {
-        url: host.host
-      }
-    };
+    fh.cloud_props = {hosts: {url: host.host}};
     fh.app_props = appProps.getAppProps();
   }
 });
 
 //keep backward compatibility
-fh.on(constants.INTERNAL_CONFIG_LOADED_EVENT, function(err, host) {
-  if (err) {
+fh.on(constants.INTERNAL_CONFIG_LOADED_EVENT, function(err, host){
+  if(err){
     fh.app_props = {};
   } else {
     fh.app_props = appProps.getAppProps();
@@ -10125,9 +7632,13 @@ fh.reset = cloud.reset;
 //So, we assign $fh to the window name space directly here. (otherwise, we have to fork the grunt browserify plugin, then fork browerify and the dependent umd module, really not worthing the effort).
 window.$fh = fh;
 module.exports = fh;
-},{"./modules/ajax":21,"./modules/api_act":22,"./modules/api_auth":23,"./modules/api_cloud":24,"./modules/api_hash":25,"./modules/api_mbaas":26,"./modules/api_push":27,"./modules/api_sec":28,"./modules/appProps":29,"./modules/constants":31,"./modules/device":34,"./modules/events":35,"./modules/fhparams":36,"./modules/logger":42,"./modules/sync-cli":50,"./modules/waitForCloud":52}],20:[function(_dereq_,module,exports){
-var urlparser = _dereq_('url');
 
+
+
+
+
+
+},{"./modules/ajax":18,"./modules/api_act":19,"./modules/api_auth":20,"./modules/api_cloud":21,"./modules/api_hash":22,"./modules/api_mbaas":23,"./modules/api_sec":24,"./modules/appProps":25,"./modules/constants":27,"./modules/device":29,"./modules/events":30,"./modules/fhparams":31,"./modules/logger":37,"./modules/sync-cli":45,"./modules/waitForCloud":47}],17:[function(_dereq_,module,exports){
 var XDomainRequestWrapper = function(xdr){
   this.xdr = xdr;
   this.isWrapper = true;
@@ -10136,7 +7647,6 @@ var XDomainRequestWrapper = function(xdr){
   this.status = 0;
   this.statusText = "";
   this.responseText = "";
-  this.headers = {};
   var self = this;
   this.xdr.onload = function(){
       self.readyState = 4;
@@ -10169,10 +7679,7 @@ var XDomainRequestWrapper = function(xdr){
 };
 
 XDomainRequestWrapper.prototype.open = function(method, url, asyn){
-  var parsedUrl = urlparser.parse(url, true);
-  parsedUrl.query = parsedUrl.query || {};
-  parsedUrl.query.fh_headers = this.headers;
-  this.xdr.open(method, urlparser.format(parsedUrl));
+  this.xdr.open(method, url);
 };
 
 XDomainRequestWrapper.prototype.send = function(data){
@@ -10187,8 +7694,7 @@ XDomainRequestWrapper.prototype.setRequestHeader = function(n, v){
   //not supported by xdr
   //Good doc on limitations of XDomainRequest http://blogs.msdn.com/b/ieinternals/archive/2010/05/13/xdomainrequest-restrictions-limitations-and-workarounds.aspx
   //XDomainRequest doesn't allow setting custom request headers. But it is the only available option to do CORS requests in IE8 & 9. In IE10, they finally start to use standard XMLHttpRequest.
-  //To support FH auth tokens in IE8&9, we will append them as query parameters, use the key "fh_headers"
-  this.headers[n] = v;
+  //To support FH auth tokens in IE8&9, we have to find a different way of doing it.
 };
 
 XDomainRequestWrapper.prototype.getResponseHeader = function(n){
@@ -10197,7 +7703,7 @@ XDomainRequestWrapper.prototype.getResponseHeader = function(n){
 
 module.exports = XDomainRequestWrapper;
 
-},{"url":13}],21:[function(_dereq_,module,exports){
+},{}],18:[function(_dereq_,module,exports){
 //a shameless copy from https://github.com/ForbesLindesay/ajax/blob/master/index.js.
 //it has the same methods and config options as jQuery/zeptojs but very light weight. see http://api.jquery.com/jQuery.ajax/
 //a few small changes are made for supporting IE 8 and other features:
@@ -10434,7 +7940,7 @@ ajax.JSONP = function (options) {
     abortTimeout = undefined;
     //todo: remove script
     //$(script).remove()
-    delete window[callbackName]
+    window[callbackName] = undefined; // IE8 won't allow delete here
     ajaxSuccess(data, xhr, options)
   }
 
@@ -10473,7 +7979,7 @@ function getXhr(crossDomain){
   }
   // For Titanium SDK
   if (typeof Titanium !== 'undefined'){
-    var params = {};
+    var parms = {};
     if(ajax.settings && ajax.settings.timeout){
       params.timeout = ajax.settings.timeout;
     }
@@ -10599,38 +8105,33 @@ function extend(target) {
   return target
 }
 
-},{"./XDomainRequestWrapper":20,"./events":35,"./logger":42,"type-of":17}],22:[function(_dereq_,module,exports){
+},{"./XDomainRequestWrapper":17,"./events":30,"./logger":37,"type-of":15}],19:[function(_dereq_,module,exports){
 var logger =_dereq_("./logger");
 var cloud = _dereq_("./waitForCloud");
 var fhparams = _dereq_("./fhparams");
 var ajax = _dereq_("./ajax");
+var JSON = _dereq_("JSON");
 var handleError = _dereq_("./handleError");
 var appProps = _dereq_("./appProps");
-var _ = _dereq_('underscore');
 
 function doActCall(opts, success, fail){
   var cloud_host = cloud.getCloudHost();
   var url = cloud_host.getActUrl(opts.act);
   var params = opts.req || {};
   params = fhparams.addFHParams(params);
-  var headers = fhparams.getFHHeaders();
-  if (opts.headers) {
-    headers = _.extend(headers, opts.headers);
-  }
   return ajax({
     "url": url,
-    "tryJSONP": typeof Titanium === 'undefined',
+    "tryJSONP": true,
     "type": "POST",
     "dataType": "json",
     "data": JSON.stringify(params),
-    "headers": headers,
     "contentType": "application/json",
     "timeout": opts.timeout || appProps.timeout,
     "success": success,
     "error": function(req, statusText, error){
       return handleError(fail, req, statusText, error);
     }
-  });
+  })
 }
 
 module.exports = function(opts, success, fail){
@@ -10652,52 +8153,22 @@ module.exports = function(opts, success, fail){
     } else {
       doActCall(opts, success, fail);
     }
-  });
-};
-},{"./ajax":21,"./appProps":29,"./fhparams":36,"./handleError":37,"./logger":42,"./waitForCloud":52,"underscore":18}],23:[function(_dereq_,module,exports){
+  })
+}
+
+},{"./ajax":18,"./appProps":25,"./fhparams":31,"./handleError":32,"./logger":37,"./waitForCloud":47,"JSON":3}],20:[function(_dereq_,module,exports){
 var logger = _dereq_("./logger");
 var cloud = _dereq_("./waitForCloud");
 var fhparams = _dereq_("./fhparams");
 var ajax = _dereq_("./ajax");
+var JSON = _dereq_("JSON");
 var handleError = _dereq_("./handleError");
 var device = _dereq_("./device");
 var constants = _dereq_("./constants");
 var checkAuth = _dereq_("./checkAuth");
 var appProps = _dereq_("./appProps");
-var data = _dereq_('./data');
 
-function callAuthEndpoint(endpoint, data, opts, success, fail){
-  var app_props = appProps.getAppProps();
-  var path = app_props.host + constants.boxprefix + "admin/authpolicy/" + endpoint;
-
-  if (app_props.local) {
-    path = cloud.getCloudHostUrl() + constants.boxprefix + "admin/authpolicy/" + endpoint;
-  }
-
-  ajax({
-    "url": path,
-    "type": "POST",
-    "tryJSONP": typeof Titanium === 'undefined',
-    "data": JSON.stringify(data),
-    "dataType": "json",
-    "contentType": "application/json",
-    "timeout": opts.timeout || app_props.timeout,
-    "headers": fhparams.getFHHeaders(),
-    success: function(res){
-      if(success){
-        return success(res);
-      }
-    },
-    error: function(req, statusText, error){
-      logger.error('got error when calling ' + endpoint, req.responseText || req, error);
-      if(fail){
-        fail(req, statusText, error);
-      }
-    }
-  });
-}
-
-var auth = function(opts, success, fail) {
+module.exports = function(opts, success, fail) {
   if (!fail) {
     fail = function(msg, error) {
       logger.debug(msg + ":" + JSON.stringify(error));
@@ -10717,10 +8188,6 @@ var auth = function(opts, success, fail) {
       var req = {};
       req.policyId = opts.policyId;
       req.clientToken = opts.clientToken;
-      var cloudHost = cloud.getCloudHost();
-      if(cloudHost.getEnv()){
-        req.environment = cloudHost.getEnv(); 
-      }
       if (opts.endRedirectUrl) {
         req.endRedirectUrl = opts.endRedirectUrl;
         if (opts.authCallback) {
@@ -10733,63 +8200,41 @@ var auth = function(opts, success, fail) {
       }
       var endurl = opts.endRedirectUrl || "status=complete";
       req.device = device.getDeviceId();
+      var app_props = appProps.getAppProps();
+      var path = app_props.host + constants.boxprefix + "admin/authpolicy/auth";
+
+      if (app_props.local) {
+        path = constants.boxprefix + "admin/authpolicy/auth";
+      }
+
       req = fhparams.addFHParams(req);
-      callAuthEndpoint('auth', req, opts, function(res){
-        auth.authenticateHandler(endurl, res, success, fail);
-      }, function(req, statusText, error){
-        handleError(fail, req, statusText, error);
+
+      ajax({
+        "url": path,
+        "type": "POST",
+        "tryJSONP": true,
+        "data": JSON.stringify(req),
+        "dataType": "json",
+        "contentType": "application/json",
+        "timeout": opts.timeout || app_props.timeout,
+        success: function(res) {
+          checkAuth.handleAuthResponse(endurl, res, success, fail);
+        },
+        error: function(req, statusText, error) {
+          handleError(fail, req, statusText, error);
+        }
       });
     }
   });
-};
-
-auth.hasSession = function(cb){
-  data.sessionManager.exists(cb);
-};
-
-auth.clearSession = function(cb){
-  data.sessionManager.read(function(err, session){
-    if(err){
-      return cb(err);
-    }
-    if(session){
-      //try the best to delete the remote session
-      callAuthEndpoint('revokesession', session, {});
-    }
-    data.sessionManager.remove(cb);
-    fhparams.setAuthSessionToken(undefined);
-  });
-};
-
-auth.authenticateHandler = checkAuth.handleAuthResponse;
-
-auth.verify = function(cb){
-  data.sessionManager.read(function(err, session){
-    if(err){
-      return cb(err);
-    }
-    if(session){
-      //try the best to delete the session in remote
-      callAuthEndpoint('verifysession', session, {}, function(res){
-        return cb(null, res.isValid);
-      }, function(req, statusText, error){
-        return cb('network_error');
-      });
-    } else {
-      return cb('no_session');
-    }
-  });
-};
-
-module.exports = auth;
-},{"./ajax":21,"./appProps":29,"./checkAuth":30,"./constants":31,"./data":33,"./device":34,"./fhparams":36,"./handleError":37,"./logger":42,"./waitForCloud":52}],24:[function(_dereq_,module,exports){
+}
+},{"./ajax":18,"./appProps":25,"./checkAuth":26,"./constants":27,"./device":29,"./fhparams":31,"./handleError":32,"./logger":37,"./waitForCloud":47,"JSON":3}],21:[function(_dereq_,module,exports){
 var logger =_dereq_("./logger");
 var cloud = _dereq_("./waitForCloud");
 var fhparams = _dereq_("./fhparams");
 var ajax = _dereq_("./ajax");
+var JSON = _dereq_("JSON");
 var handleError = _dereq_("./handleError");
 var appProps = _dereq_("./appProps");
-var _ = _dereq_('underscore');
 
 function doCloudCall(opts, success, fail){
   var cloud_host = cloud.getCloudHost();
@@ -10798,15 +8243,10 @@ function doCloudCall(opts, success, fail){
   params = fhparams.addFHParams(params);
   var type = opts.method || "POST";
   var data;
-  if (["POST", "PUT", "PATCH", "DELETE"].indexOf(type.toUpperCase()) !== -1) {
+  if ("POST" === type.toUpperCase()) {
     data = JSON.stringify(params);
   } else {
     data = params;
-  }
-
-  var headers = fhparams.getFHHeaders();
-  if (opts.headers) {
-    headers = _.extend(headers, opts.headers);
   }
 
   return ajax({
@@ -10816,12 +8256,11 @@ function doCloudCall(opts, success, fail){
     "data": data,
     "contentType": opts.contentType || "application/json",
     "timeout": opts.timeout || appProps.timeout,
-    "headers": headers,
     "success": success,
     "error": function(req, statusText, error){
       return handleError(fail, req, statusText, error);
     }
-  });
+  })
 }
 
 module.exports = function(opts, success, fail){
@@ -10839,9 +8278,10 @@ module.exports = function(opts, success, fail){
     } else {
       doCloudCall(opts, success, fail);
     }
-  });
-};
-},{"./ajax":21,"./appProps":29,"./fhparams":36,"./handleError":37,"./logger":42,"./waitForCloud":52,"underscore":18}],25:[function(_dereq_,module,exports){
+  })
+}
+
+},{"./ajax":18,"./appProps":25,"./fhparams":31,"./handleError":32,"./logger":37,"./waitForCloud":47,"JSON":3}],22:[function(_dereq_,module,exports){
 var hashImpl = _dereq_("./security/hash");
 
 module.exports = function(p, s, f){
@@ -10853,11 +8293,12 @@ module.exports = function(p, s, f){
   params.params = p;
   hashImpl(params, s, f);
 };
-},{"./security/hash":48}],26:[function(_dereq_,module,exports){
+},{"./security/hash":43}],23:[function(_dereq_,module,exports){
 var logger =_dereq_("./logger");
 var cloud = _dereq_("./waitForCloud");
 var fhparams = _dereq_("./fhparams");
 var ajax = _dereq_("./ajax");
+var JSON = _dereq_("JSON");
 var handleError = _dereq_("./handleError");
 var consts = _dereq_("./constants");
 var appProps = _dereq_("./appProps");
@@ -10883,11 +8324,10 @@ module.exports = function(opts, success, fail){
       params = fhparams.addFHParams(params);
       return ajax({
         "url": url,
-        "tryJSONP": typeof Titanium === 'undefined',
+        "tryJSONP": true,
         "type": "POST",
         "dataType": "json",
         "data": JSON.stringify(params),
-        "headers": fhparams.getFHHeaders(),
         "contentType": "application/json",
         "timeout": opts.timeout || appProps.timeout,
         "success": success,
@@ -10897,41 +8337,9 @@ module.exports = function(opts, success, fail){
       });
     }
   });
-};
-},{"./ajax":21,"./appProps":29,"./constants":31,"./fhparams":36,"./handleError":37,"./logger":42,"./waitForCloud":52}],27:[function(_dereq_,module,exports){
-var logger = _dereq_("./logger");
-var appProps = _dereq_("./appProps");
-var cloud = _dereq_("./waitForCloud");
+} 
 
-module.exports = function (onNotification, success, fail, config) {
-  if (!fail) {
-    fail = function (msg, error) {
-      logger.debug(msg + ":" + JSON.stringify(error));
-    };
-  }
-
-  cloud.ready(function(err, cloudHost){
-    logger.debug("push is called");
-    if(err){
-      return fail(err.message, err);
-    } else {
-      if (window.push) {
-        var props = appProps.getAppProps();
-        props.pushServerURL = props.host + '/api/v2/ag-push';
-        if (config) {
-          for(var key in config) {
-            props[key] = config[key];
-          }
-        }
-        window.push.register(onNotification, success, fail, props);
-      } else {
-        fail('push plugin not installed');
-      }
-    }
-  });
-};
-
-},{"./appProps":29,"./logger":42,"./waitForCloud":52}],28:[function(_dereq_,module,exports){
+},{"./ajax":18,"./appProps":25,"./constants":27,"./fhparams":31,"./handleError":32,"./logger":37,"./waitForCloud":47,"JSON":3}],24:[function(_dereq_,module,exports){
 var keygen = _dereq_("./security/aes-keygen");
 var aes = _dereq_("./security/aes-node");
 var rsa = _dereq_("./security/rsa-node");
@@ -10974,47 +8382,31 @@ module.exports = function(p, s, f){
       return f('keygen_bad_algorithm:' + p.params.algorithm, {}, p);
     }
   }
-};
-},{"./security/aes-keygen":46,"./security/aes-node":47,"./security/hash":48,"./security/rsa-node":49}],29:[function(_dereq_,module,exports){
+}
+},{"./security/aes-keygen":41,"./security/aes-node":42,"./security/hash":43,"./security/rsa-node":44}],25:[function(_dereq_,module,exports){
 var consts = _dereq_("./constants");
 var ajax = _dereq_("./ajax");
 var logger = _dereq_("./logger");
 var qs = _dereq_("./queryMap");
-var _ = _dereq_('underscore');
 
 var app_props = null;
 
 var load = function(cb) {
   var doc_url = document.location.href;
-  var url_params = qs(doc_url.replace(/#.*?$/g, ''));
-  var url_props = {};
-  
-  //only use fh_ prefixed params
-  for(var key in url_params){
-    if(url_params.hasOwnProperty(key) ){
-      if(key.indexOf('fh_') === 0){
-        url_props[key.substr(3)] = url_params[key]; 
-      }
-    }
-  }
-  
-  //default properties
-  app_props = {
-    appid: "000000000000000000000000",
-    appkey: "0000000000000000000000000000000000000000",
-    projectid: "000000000000000000000000",
-    connectiontag: "0.0.1"
-  };
-  
-  function setProps(props){
-    _.extend(app_props, props, url_props);
-    
-    if(typeof url_params.url !== 'undefined'){
-     app_props.host = url_params.url; 
-    }
-    
-    app_props.local = !!(url_props.host || url_params.url);
-    cb(null, app_props);
+  var url_params = qs(doc_url);
+  var local = (typeof url_params.url !== 'undefined');
+
+  // For local environments, no init needed
+  if (local) {
+    app_props = {};
+    app_props.local = true;
+    app_props.host = url_params.url.replace(/#.*?$/g, '');
+    app_props.appid = "000000000000000000000000";
+    app_props.appkey = "0000000000000000000000000000000000000000";
+    app_props.projectid = "000000000000000000000000";
+    app_props.connectiontag = "0.0.1";
+    app_props.loglevel = url_params.loglevel;
+    return cb(null, app_props);
   }
 
   var config_url = url_params.fhconfig || consts.config_js;
@@ -11027,18 +8419,21 @@ var load = function(cb) {
       if (null == data) {
         //fh v2 only
         if(window.fh_app_props){
-          return setProps(window.fh_app_props);
+          app_props = window.fh_app_props;
+          return cb(null, window.fh_app_props);
         }
         return cb(new Error("app_config_missing"));
       } else {
+        app_props = data;
 
-        setProps(data);
+        cb(null, app_props);
       }
     },
     error: function(req, statusText, error) {
       //fh v2 only
       if(window.fh_app_props){
-        return setProps(window.fh_app_props);
+        app_props = window.fh_app_props;
+        return cb(null, window.fh_app_props);
       }
       logger.error(consts.config_js + " Not Found");
       cb(new Error("app_config_missing"));
@@ -11060,11 +8455,11 @@ module.exports = {
   setAppProps: setAppProps
 };
 
-},{"./ajax":21,"./constants":31,"./logger":42,"./queryMap":44,"underscore":18}],30:[function(_dereq_,module,exports){
+},{"./ajax":18,"./constants":27,"./logger":37,"./queryMap":39}],26:[function(_dereq_,module,exports){
 var logger = _dereq_("./logger");
 var queryMap = _dereq_("./queryMap");
+var JSON = _dereq_("JSON");
 var fhparams = _dereq_("./fhparams");
-var data = _dereq_('./data');
 
 var checkAuth = function(url) {
   if (/\_fhAuthCallback/.test(url)) {
@@ -11075,7 +8470,6 @@ var checkAuth = function(url) {
         if (qmap['result'] && qmap['result'] === 'success') {
           var sucRes = {'sessionToken': qmap['fh_auth_session'], 'authResponse' : JSON.parse(decodeURIComponent(decodeURIComponent(qmap['authResponse'])))};
           fhparams.setAuthSessionToken(qmap['fh_auth_session']);
-          data.sessionManager.save(qmap['fh_auth_session']);
           window[fhCallback](null, sucRes);
         } else {
           window[fhCallback]({'message':qmap['message']});
@@ -11091,12 +8485,8 @@ var handleAuthResponse = function(endurl, res, success, fail){
     var onComplete = function(res){
       if(res.sessionToken){
         fhparams.setAuthSessionToken(res.sessionToken);
-        data.sessionManager.save(res.sessionToken, function(){
-          return success(res);
-        });
-      } else {
-        return success(res);
       }
+      success(res);
     };
     //for OAuth, a url will be returned which means the user should be directed to that url to authenticate.
     //we try to use the ChildBrower plugin if it can be found. Otherwise send the url to the success function to allow developer to handle it.
@@ -11173,19 +8563,17 @@ module.exports = {
   "handleAuthResponse": handleAuthResponse
 };
 
-},{"./data":33,"./fhparams":36,"./logger":42,"./queryMap":44}],31:[function(_dereq_,module,exports){
+},{"./fhparams":31,"./logger":37,"./queryMap":39,"JSON":3}],27:[function(_dereq_,module,exports){
 module.exports = {
   "boxprefix": "/box/srv/1.1/",
-  "sdk_version": "2.14.4-196",
+  "sdk_version": "2.5.0-159",
   "config_js": "fhconfig.json",
   "INIT_EVENT": "fhinit",
   "INTERNAL_CONFIG_LOADED_EVENT": "internalfhconfigloaded",
-  "CONFIG_LOADED_EVENT": "fhconfigloaded",
-  "SESSION_TOKEN_STORAGE_NAME": "fh_session_token",
-  "SESSION_TOKEN_KEY_NAME":"sessionToken"
+  "CONFIG_LOADED_EVENT": "fhconfigloaded"
 };
 
-},{}],32:[function(_dereq_,module,exports){
+},{}],28:[function(_dereq_,module,exports){
 module.exports = {
   readCookieValue  : function (cookie_name) {
     var name_str = cookie_name + "=";
@@ -11210,72 +8598,7 @@ module.exports = {
   }
 };
 
-},{}],33:[function(_dereq_,module,exports){
-var Lawnchair = _dereq_('../../libs/generated/lawnchair');
-var lawnchairext = _dereq_('./lawnchair-ext');
-var logger = _dereq_('./logger');
-var constants = _dereq_("./constants");
-
-var data = {
-  //dom adapter doens't work on windows phone, so don't specify the adapter if the dom one failed
-  //we specify the order of lawnchair adapters to use, lawnchair will find the right one to use, to keep backward compatibility, keep the order
-  //as dom, webkit-sqlite, localFileStorage, window-name
-  DEFAULT_ADAPTERS : ["dom", "webkit-sqlite", "window-name"],
-  getStorage: function(name, adapters, fail){
-    var adpts = data.DEFAULT_ADAPTERS;
-    var errorHandler = fail || function(){};
-    if(adapters && adapters.length > 0){
-      adpts = (typeof adapters === 'string'?[adapters]: adapters);
-    }
-    var conf = {
-      name: name,
-      adapter: adpts,
-      fail: function(msg, err){
-        var error_message = 'read/save from/to local storage failed  msg:' + msg + ' err:' + err;
-        logger.error(error_message, err);
-        errorHandler(error_message, {});
-      }
-    };
-    var store = Lawnchair(conf, function(){});
-    return store;
-  },
-  addFileStorageAdapter: function(appProps, hashFunc){
-    Lawnchair.adapter('localFileStorage', lawnchairext.fileStorageAdapter(appProps, hashFunc));
-  },
-  sessionManager: {
-    read: function(cb){
-      data.getStorage(constants.SESSION_TOKEN_STORAGE_NAME).get(constants.SESSION_TOKEN_KEY_NAME, function(session){
-        if(cb){
-          return cb(null, session);
-        }
-      });
-    },
-    exists: function(cb){
-      data.getStorage(constants.SESSION_TOKEN_STORAGE_NAME).exists(constants.SESSION_TOKEN_KEY_NAME, function(exist){
-        if(cb){
-          return cb(null, exist);
-        }
-      });
-    },
-    remove: function(cb){
-      data.getStorage(constants.SESSION_TOKEN_STORAGE_NAME).remove(constants.SESSION_TOKEN_KEY_NAME, function(){
-        if(cb){
-          return cb();
-        }
-      });
-    },
-    save: function(sessionToken, cb){
-      data.getStorage(constants.SESSION_TOKEN_STORAGE_NAME).save({key: constants.SESSION_TOKEN_KEY_NAME, sessionToken: sessionToken}, function(obj){
-        if(cb){
-          return cb();
-        }
-      });
-    }
-  }
-};
-
-module.exports = data;
-},{"../../libs/generated/lawnchair":2,"./constants":31,"./lawnchair-ext":40,"./logger":42}],34:[function(_dereq_,module,exports){
+},{}],29:[function(_dereq_,module,exports){
 var cookies = _dereq_("./cookies");
 var uuidModule = _dereq_("./uuid");
 var logger = _dereq_("./logger");
@@ -11344,15 +8667,16 @@ module.exports = {
 
     return destination;
   }
-};
-},{"./cookies":32,"./logger":42,"./platformsMap":43,"./uuid":51}],35:[function(_dereq_,module,exports){
+}
+
+},{"./cookies":28,"./logger":37,"./platformsMap":38,"./uuid":46}],30:[function(_dereq_,module,exports){
 var EventEmitter = _dereq_('events').EventEmitter;
 
 var emitter = new EventEmitter();
 emitter.setMaxListeners(0);
 
 module.exports = emitter;
-},{"events":6}],36:[function(_dereq_,module,exports){
+},{"events":9}],31:[function(_dereq_,module,exports){
 var device = _dereq_("./device");
 var sdkversion = _dereq_("./sdkversion");
 var appProps = _dereq_("./appProps");
@@ -11404,39 +8728,27 @@ var buildFHParams = function(){
   defaultParams = fhparams;
   logger.debug("fhparams = ", defaultParams);
   return fhparams;
-};
+}
 
-//TODO: deprecate this. Move to use headers instead
 var addFHParams = function(params){
-  var p = params || {};
-  p.__fh = buildFHParams();
-  return p;
-};
-
-var getFHHeaders = function(){
-  var headers = {};
-  var params = buildFHParams();
-  for(var name in params){
-    if(params.hasOwnProperty(name)){
-      headers['X-FH-' + name] = params[name];
-    }
-  }
-  return headers;
-};
+  var params = params || {};
+  params.__fh = buildFHParams();
+  return params;
+}
 
 var setAuthSessionToken = function(sessionToken){
   authSessionToken = sessionToken;
-  defaultParams = null;
-};
+}
 
 module.exports = {
   "buildFHParams": buildFHParams,
   "addFHParams": addFHParams,
-  "setAuthSessionToken":setAuthSessionToken,
-  "getFHHeaders": getFHHeaders
-};
+  "setAuthSessionToken":setAuthSessionToken
+}
 
-},{"./appProps":29,"./device":34,"./logger":42,"./sdkversion":45}],37:[function(_dereq_,module,exports){
+},{"./appProps":25,"./device":29,"./logger":37,"./sdkversion":40}],32:[function(_dereq_,module,exports){
+var JSON = _dereq_("JSON");
+
 module.exports = function(fail, req, resStatus, error){
   var errraw;
   var statusCode = 0;
@@ -11444,7 +8756,7 @@ module.exports = function(fail, req, resStatus, error){
     try{
       statusCode = req.status;
       var res = JSON.parse(req.responseText);
-      errraw = res.error || res.msg || res;
+      errraw = res.error || res.msg;
       if (errraw instanceof Array) {
         errraw = errraw.join('\n');
       }
@@ -11461,7 +8773,7 @@ module.exports = function(fail, req, resStatus, error){
   }
 };
 
-},{}],38:[function(_dereq_,module,exports){
+},{"JSON":3}],33:[function(_dereq_,module,exports){
 var constants = _dereq_("./constants");
 var appProps = _dereq_("./appProps");
 
@@ -11484,7 +8796,6 @@ function removeStartSlash(input){
 function CloudHost(cloud_props){
   this.cloud_props = cloud_props;
   this.cloud_host = undefined;
-  this.app_env = null;
   this.isLegacy = false;
 }
 
@@ -11519,7 +8830,7 @@ CloudHost.prototype.getHost = function(appType){
     }
     return url;
   }
-};
+}
 
 CloudHost.prototype.getActUrl = function(act){
   var app_props = appProps.getAppProps() || {};
@@ -11531,7 +8842,7 @@ CloudHost.prototype.getActUrl = function(act){
   } else {
     return this.cloud_host + "/cloud/" + act;
   }
-};
+}
 
 CloudHost.prototype.getMBAASUrl = function(service){
   var app_props = appProps.getAppProps() || {};
@@ -11539,7 +8850,7 @@ CloudHost.prototype.getMBAASUrl = function(service){
     this.getHost(app_props.mode);
   }
   return this.cloud_host + "/mbaas/" + service;
-};
+}
 
 CloudHost.prototype.getCloudUrl = function(path){
   var app_props = appProps.getAppProps() || {};
@@ -11547,38 +8858,30 @@ CloudHost.prototype.getCloudUrl = function(path){
     this.getHost(app_props.mode);
   }
   return this.cloud_host + "/" + removeStartSlash(path);
-};
+}
 
-CloudHost.prototype.getEnv = function(){
-  if(this.app_env){
-    return this.app_env;
-  } else {
-    if(this.cloud_props && this.cloud_props.hosts){
-      this.app_env = this.cloud_props.hosts.environment;
-    }
-  }
-  return this.app_env;
-};
+
 
 module.exports = CloudHost;
-},{"./appProps":29,"./constants":31}],39:[function(_dereq_,module,exports){
+},{"./appProps":25,"./constants":27}],34:[function(_dereq_,module,exports){
 var loadScript = _dereq_("./loadScript");
+var Lawnchair = _dereq_('../../libs/generated/lawnchair');
+var lawnchairext = _dereq_('./lawnchair-ext');
 var consts = _dereq_("./constants");
 var fhparams = _dereq_("./fhparams");
 var ajax = _dereq_("./ajax");
 var handleError = _dereq_("./handleError");
 var logger = _dereq_("./logger");
+var JSON = _dereq_("JSON");
 var hashFunc = _dereq_("./security/hash");
 var appProps = _dereq_("./appProps");
 var constants = _dereq_("./constants");
 var events = _dereq_("./events");
-var data = _dereq_('./data');
 
 var init = function(cb) {
   appProps.load(function(err, data) {
-    if (err) {
-      return cb(err);
-    }
+    if (err) return cb(err);
+
     // Emit internal config loaded event - SDK will now set appprops
     events.emit(constants.INTERNAL_CONFIG_LOADED_EVENT, null, data);
     return loadCloudProps(data, cb);
@@ -11615,14 +8918,30 @@ var loadCloudProps = function(app_props, callback) {
 
 
   //now we have app props, add the fileStorageAdapter
-  data.addFileStorageAdapter(app_props, hashFunc);
+  lawnchairext.addAdapter(app_props, hashFunc);
+  //dom adapter doens't work on windows phone, so don't specify the adapter if the dom one failed
+  //we specify the order of lawnchair adapters to use, lawnchair will find the right one to use, to keep backward compatibility, keep the order
+  //as dom, webkit-sqlite, localFileStorage, window-name
+  var lcConf = {
+    name: "fh_init_storage",
+    adapter: ["dom", "webkit-sqlite", "window-name"],
+    fail: function(msg, err) {
+      var error_message = 'read/save from/to local storage failed  msg:' + msg + ' err:' + err;
+      return fail(error_message, {});
+    }
+  };
+
+  if (typeof Titanium !== "undefined") {
+    lcConf.adapter = ['titanium'];
+  }
+
   var doInit = function(path, appProps, savedHost, storage) {
     var data = fhparams.buildFHParams();
 
     ajax({
       "url": path,
       "type": "POST",
-      "tryJSONP": typeof Titanium === 'undefined',
+      "tryJSONP": true,
       "dataType": "json",
       "contentType": "application/json",
       "data": JSON.stringify(data),
@@ -11672,7 +8991,7 @@ var loadCloudProps = function(app_props, callback) {
   var storage = null;
   var path = app_props.host + consts.boxprefix + "app/init";
   try {
-    storage = data.getStorage("fh_init_storage", typeof Titanium !== "undefined"?['titanium']:null);
+    storage = new Lawnchair(lcConf, function() {});
     storage.get('fh_init', function(storage_res) {
       var savedHost = null;
       if (storage_res && storage_res.value !== null && typeof(storage_res.value) !== "undefined" && storage_res !== "") {
@@ -11700,9 +9019,10 @@ var loadCloudProps = function(app_props, callback) {
 module.exports = {
   "init": init,
   "loadCloudProps": loadCloudProps
-};
+}
+},{"../../libs/generated/lawnchair":2,"./ajax":18,"./appProps":25,"./constants":27,"./events":30,"./fhparams":31,"./handleError":32,"./lawnchair-ext":35,"./loadScript":36,"./logger":37,"./security/hash":43,"JSON":3}],35:[function(_dereq_,module,exports){
+var Lawnchair = _dereq_('../../libs/generated/lawnchair');
 
-},{"./ajax":21,"./appProps":29,"./constants":31,"./data":33,"./events":35,"./fhparams":36,"./handleError":37,"./loadScript":41,"./logger":42,"./security/hash":48}],40:[function(_dereq_,module,exports){
 var fileStorageAdapter = function (app_props, hashFunc) {
   // private methods
 
@@ -11713,11 +9033,8 @@ var fileStorageAdapter = function (app_props, hashFunc) {
   }
 
   var fail = function (e, i) {
-    if(console) {
-      console.log('error in file system adapter !', e, i);
-    } else {
-      throw e;
-    }
+    if(console) console.log('error in file system adapter !', e, i);
+    else throw e;
   };
 
 
@@ -11743,7 +9060,7 @@ var fileStorageAdapter = function (app_props, hashFunc) {
           return cb(filename);
         },function handleError(err){
           return cb(filename);
-        });
+        })
       } else {
         doLog('filenameForKey key=' + key+ ' , Filename: ' + filename);
         return cb(filename);
@@ -11753,16 +9070,12 @@ var fileStorageAdapter = function (app_props, hashFunc) {
 
   return {
 
-    valid: function () { return !!(window.requestFileSystem); },
+    valid: function () { return !!(window.requestFileSystem) },
 
     init : function (options, callback){
       //calls the parent function fn and applies this scope
-      if(options && 'function' === typeof options.fail ) {
-        fail = options.fail;
-      }
-      if (callback) {
-        this.fn(this.name, callback).call(this, this);
-      }
+      if(options && 'function' === typeof options.fail ) fail = options.fail;
+      if (callback) this.fn(this.name, callback).call(this, this);
     },
 
     keys: function (callback){
@@ -11886,12 +9199,16 @@ var fileStorageAdapter = function (app_props, hashFunc) {
 
 
   };
-};
+}
+
+var addAdapter = function(app_props, hashFunc){
+  Lawnchair.adapter('localFileStorage', fileStorageAdapter(app_props, hashFunc));
+}
 
 module.exports = {
-  fileStorageAdapter: fileStorageAdapter
-};
-},{}],41:[function(_dereq_,module,exports){
+  addAdapter: addAdapter
+}
+},{"../../libs/generated/lawnchair":2}],36:[function(_dereq_,module,exports){
 module.exports = function (url, callback) {
   var script;
   var head = document.head || document.getElementsByTagName("head")[0] || document.documentElement;
@@ -11914,7 +9231,7 @@ module.exports = function (url, callback) {
   head.insertBefore(script, head.firstChild);
 };
 
-},{}],42:[function(_dereq_,module,exports){
+},{}],37:[function(_dereq_,module,exports){
 var console = _dereq_('console');
 var log = _dereq_('loglevel');
 
@@ -11938,7 +9255,7 @@ log.setLevel('info');
  * Use either string or integer value
  */
 module.exports = log;
-},{"console":5,"loglevel":16}],43:[function(_dereq_,module,exports){
+},{"console":8,"loglevel":14}],38:[function(_dereq_,module,exports){
 module.exports = [
   {
     "destination" :"ipad",
@@ -11966,7 +9283,7 @@ module.exports = [
   }
 ];
 
-},{}],44:[function(_dereq_,module,exports){
+},{}],39:[function(_dereq_,module,exports){
 module.exports = function(url) {
   var qmap = {};
   var i = url.split("?");
@@ -11982,7 +9299,7 @@ module.exports = function(url) {
   }
   return qmap;
 };
-},{}],45:[function(_dereq_,module,exports){
+},{}],40:[function(_dereq_,module,exports){
 var constants = _dereq_("./constants");
 
 module.exports = function() {
@@ -11995,7 +9312,7 @@ module.exports = function() {
   return type + "/" + constants.sdk_version;
 };
 
-},{"./constants":31}],46:[function(_dereq_,module,exports){
+},{"./constants":27}],41:[function(_dereq_,module,exports){
 var rsa = _dereq_("../../../libs/rsa");
 var SecureRandom = rsa.SecureRandom;
 var byte2Hex = rsa.byte2Hex;
@@ -12034,10 +9351,10 @@ var aes_keygen = function(p, s, f){
     'secretkey': generateRandomKey(keysize),
     'iv': generateRandomKey(keysize)
   });
-};
+}
 
 module.exports = aes_keygen;
-},{"../../../libs/rsa":3}],47:[function(_dereq_,module,exports){
+},{"../../../libs/rsa":4}],42:[function(_dereq_,module,exports){
 var CryptoJS = _dereq_("../../../libs/generated/crypto");
 
 var encrypt = function(p, s, f){
@@ -12054,7 +9371,7 @@ var encrypt = function(p, s, f){
   var encrypted = CryptoJS.AES.encrypt(p.params.plaintext, CryptoJS.enc.Hex.parse(p.params.key), {iv: CryptoJS.enc.Hex.parse(p.params.iv)});
   cipher_text = CryptoJS.enc.Hex.stringify(encrypted.ciphertext);
   return s({ciphertext: cipher_text});
-};
+}
 
 var decrypt = function(p, s, f){
   var fields = ['key', 'ciphertext', 'iv'];
@@ -12070,20 +9387,15 @@ var decrypt = function(p, s, f){
   var data = CryptoJS.enc.Hex.parse(p.params.ciphertext);
   var encodeData = CryptoJS.enc.Base64.stringify(data);
   var decrypted = CryptoJS.AES.decrypt(encodeData, CryptoJS.enc.Hex.parse(p.params.key), {iv: CryptoJS.enc.Hex.parse(p.params.iv)});
-  
-  try {
-    return s({plaintext:decrypted.toString(CryptoJS.enc.Utf8)});
-  } catch (e) {
-    return f(e);
-  }
-};
+  plain_text = decrypted.toString(CryptoJS.enc.Utf8);
+  return s({plaintext:plain_text});
+}
 
 module.exports = {
   encrypt: encrypt,
   decrypt: decrypt
-};
-
-},{"../../../libs/generated/crypto":1}],48:[function(_dereq_,module,exports){
+}
+},{"../../../libs/generated/crypto":1}],43:[function(_dereq_,module,exports){
 var CryptoJS = _dereq_("../../../libs/generated/crypto");
 
 
@@ -12105,10 +9417,10 @@ var hash = function(p, s, f){
     return f("hash_unsupported_algorithm: " + p.params.algorithm);
   }
   return s({"hashvalue": hashValue});
-};
+}
 
 module.exports = hash;
-},{"../../../libs/generated/crypto":1}],49:[function(_dereq_,module,exports){
+},{"../../../libs/generated/crypto":1}],44:[function(_dereq_,module,exports){
 var rsa = _dereq_("../../../libs/rsa");
 var RSAKey = rsa.RSAKey;
 
@@ -12128,12 +9440,13 @@ var encrypt = function(p, s, f){
   var ori_text = p.params.plaintext;
   cipher_text = key.encrypt(ori_text);
   return s({ciphertext:cipher_text});
-};
+}
 
 module.exports = {
   encrypt: encrypt
-};
-},{"../../../libs/rsa":3}],50:[function(_dereq_,module,exports){
+}
+},{"../../../libs/rsa":4}],45:[function(_dereq_,module,exports){
+var JSON = _dereq_("JSON");
 var actAPI = _dereq_("./api_act");
 var cloudAPI = _dereq_("./api_cloud");
 var CryptoJS = _dereq_("../../libs/generated/crypto");
@@ -12224,9 +9537,6 @@ var self = {
 
   init_is_called: false,
 
-  //this is used to map the temp data uid (created on client) to the real uid (created in the cloud)
-  uid_map: {},
-
   // PUBLIC FUNCTION IMPLEMENTATIONS
   init: function(options) {
     self.consoleLog('sync - init called');
@@ -12251,10 +9561,10 @@ var self = {
     }
   },
 
-  manage: function(dataset_id, opts, query_params, meta_data, cb) {
+  manage: function(dataset_id, options, query_params, meta_data, cb) {
     self.consoleLog('manage - START');
 
-    var options = opts || {};
+    var options = options || {};
 
     var doManage = function(dataset) {
       self.consoleLog('doManage dataset :: initialised = ' + dataset.initialised + " :: " + dataset_id + ' :: ' + JSON.stringify(options));
@@ -12333,24 +9643,11 @@ var self = {
         var res = JSON.parse(JSON.stringify(dataset.data));
         success(res);
       } else {
-        if(failure) {
-          failure('no_data');
-        }
+        if(failure) failure('no_data');
       }
     }, function(code, msg) {
-      if(failure) {
-        failure(code, msg);
-      }
+      if(failure) failure(code, msg);
     });
-  },
-
-  getUID: function(oldOrNewUid){
-    var uid = self.uid_map[oldOrNewUid];
-    if(uid || uid === 0){
-      return uid;
-    } else {
-      return oldOrNewUid;
-    }
   },
 
   create: function(dataset_id, data, success, failure) {
@@ -12364,7 +9661,6 @@ var self = {
 
   read: function(dataset_id, uid, success, failure) {
     self.getDataSet(dataset_id, function(dataset) {
-      uid = self.getUID(uid);
       var rec = dataset.data[uid];
       if (!rec) {
         failure("unknown_uid");
@@ -12374,19 +9670,15 @@ var self = {
         success(res);
       }
     }, function(code, msg) {
-      if(failure) {
-        failure(code, msg);
-      }
+      if(failure) failure(code, msg);
     });
   },
 
   update: function(dataset_id, uid, data, success, failure) {
-    uid = self.getUID(uid);
     self.addPendingObj(dataset_id, uid, data, "update", success, failure);
   },
 
   'delete': function(dataset_id, uid, success, failure) {
-    uid = self.getUID(uid);
     self.addPendingObj(dataset_id, uid, null, "delete", success, failure);
   },
 
@@ -12665,7 +9957,7 @@ var self = {
     });
 
     function storePendingObject(obj) {
-      obj.hash = obj.hash || self.generateHash(obj);
+      obj.hash = self.generateHash(obj);
 
       self.getDataSet(dataset_id, function(dataset) {
 
@@ -12681,9 +9973,7 @@ var self = {
 
         success(obj);
       }, function(code, msg) {
-        if(failure) {
-          failure(code, msg);
-        }
+        if(failure) failure(code, msg);
       });
     }
 
@@ -12694,10 +9984,7 @@ var self = {
     pendingObj.postHash = self.generateHash(pendingObj.post);
     pendingObj.timestamp = new Date().getTime();
     if( "create" === action ) {
-      //this hash value will be returned later on when the cloud returns updates. We can then link the old uid
-      //with new uid
-      pendingObj.hash = self.generateHash(pendingObj);
-      pendingObj.uid = pendingObj.hash;
+      pendingObj.uid = pendingObj.postHash;
       storePendingObject(pendingObj);
     } else {
       self.read(dataset_id, uid, function(rec) {
@@ -12767,13 +10054,16 @@ var self = {
                     for (var up in updates) {
                       rec = updates[up];
                       acknowledgements.push(rec);
-                      if( dataSet.pending[up] && dataSet.pending[up].inFlight) {
+                      if( dataSet.pending[up] && dataSet.pending[up].inFlight && !dataSet.pending[up].crashed ) {
                         delete dataSet.pending[up];
                         self.doNotify(dataset_id, rec.uid, notification, rec);
                       }
                     }
                   }
                 }
+
+                // Check to see if any new pending records need to be updated to reflect the current state of play.
+                self.updatePendingFromNewData(dataset_id, dataSet, res);
 
                 // Check to see if any previously crashed inflight records can now be resolved
                 self.updateCrashedInFlightFromNewData(dataset_id, dataSet, res);
@@ -12784,17 +10074,31 @@ var self = {
                 //Check meta data as well to make sure it contains the correct info
                 self.updateMetaFromNewData(dataset_id, dataSet, res);
 
+                // Update the new dataset with details of any inflight updates which we have not received a response on
+                self.updateNewDataFromInFlight(dataset_id, dataSet, res);
+
+                // Update the new dataset with details of any pending updates
+                self.updateNewDataFromPending(dataset_id, dataSet, res);
+
+
+
+                if (res.records) {
+                  // Full Dataset returned
+                  dataSet.data = res.records;
+                  dataSet.hash = res.hash;
+
+                  self.doNotify(dataset_id, res.hash, self.notifications.DELTA_RECEIVED, 'full dataset');
+                }
 
                 if (res.updates) {
                   var acknowledgements = [];
-                  self.checkUidChanges(dataSet, res.updates.applied);
                   processUpdates(res.updates.applied, self.notifications.REMOTE_UPDATE_APPLIED, acknowledgements);
                   processUpdates(res.updates.failed, self.notifications.REMOTE_UPDATE_FAILED, acknowledgements);
                   processUpdates(res.updates.collisions, self.notifications.COLLISION_DETECTED, acknowledgements);
                   dataSet.acknowledgements = acknowledgements;
                 }
 
-                if (res.hash && res.hash !== dataSet.hash) {
+                if (!res.records && res.hash && res.hash !== dataSet.hash) {
                   self.consoleLog("Local dataset stale - syncing records :: local hash= " + dataSet.hash + " - remoteHash=" + res.hash);
                   // Different hash value returned - Sync individual records
                   self.syncRecords(dataset_id);
@@ -12847,10 +10151,6 @@ var self = {
         'dataset_id': dataset_id,
         'req': syncRecParams
       }, function(res) {
-        self.consoleLog('syncRecords Res before applying pending changes :: ' + JSON.stringify(res));
-        self.applyPendingChangesToRecords(dataSet, res);
-        self.consoleLog('syncRecords Res after apply pending changes :: ' + JSON.stringify(res));
-
         var i;
 
         if (res.create) {
@@ -12859,7 +10159,6 @@ var self = {
             self.doNotify(dataset_id, i, self.notifications.RECORD_DELTA_RECEIVED, "create");
           }
         }
-        
         if (res.update) {
           for (i in res.update) {
             localDataSet[i].hash = res.update[i].hash;
@@ -12896,85 +10195,6 @@ var self = {
       self.saveDataSet(dataset_id);
       self.doNotify(dataset_id, dataset.hash, notification, status);
     });
-  },
-
-  applyPendingChangesToRecords: function(dataset, records){
-    var pendings = dataset.pending;
-    for(var pendingUid in pendings){
-      if(pendings.hasOwnProperty(pendingUid)){
-        var pendingObj = pendings[pendingUid];
-        var uid = pendingObj.uid;
-        //if the records contain any thing about the data records that are currently in pendings,
-        //it means there are local changes that haven't been applied to the cloud yet,
-        //so update the pre value of each pending record to relect the latest status from cloud
-        //and remove them from the response
-        if(records.create){
-          var creates = records.create;
-          if(creates && creates[uid]){
-            delete creates[uid];
-          }
-        }
-        if(records.update){
-          var updates = records.update;
-          if(updates && updates[uid]){
-            delete updates[uid];
-          }
-        }
-        if(records['delete']){
-          var deletes = records['delete'];
-          if(deletes && deletes[uid]){
-            delete deletes[uid];
-          }
-        }
-      }
-    }
-  },
-
-  checkUidChanges: function(dataset, appliedUpdates){
-    if(appliedUpdates){
-      var new_uids = {};
-      var changeUidsCount = 0;
-      for(var update in appliedUpdates){
-        if(appliedUpdates.hasOwnProperty(update)){
-          var applied_update = appliedUpdates[update];
-          var action = applied_update.action;
-          if(action && action === 'create'){
-            //we are receving the results of creations, at this point, we will have the old uid(the hash) and the real uid generated by the cloud
-            var newUid = applied_update.uid;
-            var oldUid = applied_update.hash;
-            changeUidsCount++;
-            //remember the mapping
-            self.uid_map[oldUid] = newUid;
-            new_uids[oldUid] = newUid;
-            //update the data uid in the dataset
-            var record = dataset.data[oldUid];
-            if(record){
-              dataset.data[newUid] = record;
-              delete dataset.data[oldUid];
-            }
-
-            //update the old uid in meta data
-            var metaData = dataset.meta[oldUid];
-            if(metaData) {
-              dataset.meta[newUid] = metaData;
-              delete dataset.meta[oldUid];
-            }
-          }
-        }
-      }
-      if(changeUidsCount > 0){
-        //we need to check all existing pendingRecords and update their UIDs if they are still the old values
-        for(var pending in dataset.pending){
-          if(dataset.pending.hasOwnProperty(pending)){
-            var pendingObj = dataset.pending[pending];
-            var pendingRecordUid = pendingObj.uid;
-            if(new_uids[pendingRecordUid]){
-              pendingObj.uid = new_uids[pendingRecordUid];
-            }
-          }
-        }
-      }
-    }
   },
 
   checkDatasets: function() {
@@ -13057,7 +10277,7 @@ var self = {
     if(dataset && dataset.config){
       hasCustomSync = dataset.config.has_custom_sync;
     }
-    if( hasCustomSync === true ) {
+    if( hasCustomSync == true ) {
       actAPI({
         'act' : params.dataset_id,
         'req' : params.req
@@ -13104,9 +10324,7 @@ var self = {
       self.getStorageAdapter(dataset_id, true, function(err, storage){
         storage.save({key:"dataset_" + dataset_id, val:dataset}, function(){
           //save success
-          if(cb) {
-            return cb();
-          }
+          if(cb) return cb();
         });
       });
     });
@@ -13125,14 +10343,10 @@ var self = {
           dataset.initialised = false;
           self.datasets[dataset_id] = dataset; // TODO: do we need to handle binary data?
           self.consoleLog('load from local storage success for dataset_id :' + dataset_id);
-          if(success) {
-            return success(dataset);
-          }
+          if(success) return success(dataset);
         } else {
           // no data yet, probably first time. failure calback should handle this
-          if(failure) {
-            return failure();
-          }
+          if(failure) return failure();
         }
       });
     });
@@ -13140,7 +10354,7 @@ var self = {
 
   clearCache: function(dataset_id, cb){
     delete self.datasets[dataset_id];
-    self.notify_callback_map[dataset_id] = null;
+    self.notify_callback_map[dataset_id] === null;
     self.getStorageAdapter(dataset_id, true, function(err, storage){
       storage.remove("dataset_" + dataset_id, function(){
         self.consoleLog('local cache is cleared for dataset : ' + dataset_id);
@@ -13183,6 +10397,7 @@ var self = {
           self.consoleLog('updating an existing pending record for dataset :: ' + JSON.stringify(dataset.data[uid]));
           // We are trying to update an existing pending record
           previousPendingUid = dataset.meta[uid].pendingUid;
+          dataset.meta[uid].previousPendingUid = previousPendingUid;
           previousPending = pending[previousPendingUid];
           if(previousPending) {
             if(!previousPending.inFlight){
@@ -13213,6 +10428,7 @@ var self = {
           self.consoleLog('Deleting an existing pending record for dataset :: ' + JSON.stringify(dataset.data[uid]));
           // We are trying to delete an existing pending record
           previousPendingUid = dataset.meta[uid].pendingUid;
+          dataset.meta[uid].previousPendingUid = previousPendingUid;
           previousPending = pending[previousPendingUid];
           if( previousPending ) {
             if(!previousPending.inFlight){
@@ -13251,6 +10467,146 @@ var self = {
     }
   },
 
+  updatePendingFromNewData: function(dataset_id, dataset, newData) {
+    var pending = dataset.pending;
+    var newRec;
+
+    if( pending && newData.records) {
+      for( var pendingHash in pending ) {
+        if( pending.hasOwnProperty(pendingHash) ) {
+          var pendingRec = pending[pendingHash];
+
+          dataset.meta[pendingRec.uid] = dataset.meta[pendingRec.uid] || {};
+
+          if( pendingRec.inFlight === false ) {
+            // Pending record that has not been submitted
+            self.consoleLog('updatePendingFromNewData - Found Non inFlight record -> action=' + pendingRec.action +' :: uid=' + pendingRec.uid  + ' :: hash=' + pendingRec.hash);
+            if( pendingRec.action === "update" || pendingRec.action === "delete") {
+              // Update the pre value of pending record to reflect the latest data returned from sync.
+              // This will prevent a collision being reported when the pending record is sent.
+              newRec = newData.records[pendingRec.uid];
+              if( newRec ) {
+                self.consoleLog('updatePendingFromNewData - Updating pre values for existing pending record ' + pendingRec.uid);
+                pendingRec.pre = newRec.data;
+                pendingRec.preHash = newRec.hash;
+              }
+              else {
+                // The update/delete may be for a newly created record in which case the uid will have changed.
+                var previousPendingUid = dataset.meta[pendingRec.uid].previousPendingUid;
+                var previousPending = pending[previousPendingUid];
+                if( previousPending ) {
+                  if( newData && newData.updates &&  newData.updates.applied && newData.updates.applied[previousPending.hash] ) {
+                    // There is an update in from a previous pending action
+                    var newUid = newData.updates.applied[previousPending.hash].uid;
+                    newRec = newData.records[newUid];
+                    if( newRec ) {
+                      self.consoleLog('updatePendingFromNewData - Updating pre values for existing pending record which was previously a create ' + pendingRec.uid + ' ==> ' + newUid);
+                      pendingRec.pre = newRec.data;
+                      pendingRec.preHash = newRec.hash;
+                      pendingRec.uid = newUid;
+                    }
+                  }
+                }
+              }
+            }
+
+            if( pendingRec.action === "create" ) {
+              if( newData && newData.updates &&  newData.updates.applied && newData.updates.applied[pendingHash] ) {
+                self.consoleLog('updatePendingFromNewData - Found an update for a pending create ' + JSON.stringify(newData.updates.applied[pendingHash]));
+                newRec = newData.records[newData.updates.applied[pendingHash].uid];
+                if( newRec ) {
+                  self.consoleLog('updatePendingFromNewData - Changing pending create to an update based on new record  ' + JSON.stringify(newRec));
+
+                  // Set up the pending create as an update
+                  pendingRec.action = "update";
+                  pendingRec.pre = newRec.data;
+                  pendingRec.preHash = newRec.hash;
+                  pendingRec.uid = newData.updates.applied[pendingHash].uid;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  updateNewDataFromInFlight: function(dataset_id, dataset, newData) {
+    var pending = dataset.pending;
+
+    if( pending && newData.records) {
+      for( var pendingHash in pending ) {
+        if( pending.hasOwnProperty(pendingHash) ) {
+          var pendingRec = pending[pendingHash];
+
+          if( pendingRec.inFlight ) {
+            var updateReceivedForPending = (newData && newData.updates &&  newData.updates.hashes && newData.updates.hashes[pendingHash]) ? true : false;
+
+            self.consoleLog('updateNewDataFromInFlight - Found inflight pending Record - action = ' + pendingRec.action + ' :: hash = ' + pendingHash + ' :: updateReceivedForPending=' + updateReceivedForPending);
+
+            if( ! updateReceivedForPending ) {
+              var newRec = newData.records[pendingRec.uid];
+
+              if( pendingRec.action === "update" && newRec) {
+                // Modify the new Record to have the updates from the pending record so the local dataset is consistent
+                newRec.data = pendingRec.post;
+                newRec.hash = pendingRec.postHash;
+              }
+              else if( pendingRec.action === "delete" && newRec) {
+                // Remove the record from the new dataset so the local dataset is consistent
+                delete newData.records[pendingRec.uid];
+              }
+              else if( pendingRec.action === "create" ) {
+                // Add the pending create into the new dataset so it is not lost from the UI
+                self.consoleLog('updateNewDataFromInFlight - re adding pending create to incomming dataset');
+                var newPendingCreate = {
+                  data: pendingRec.post,
+                  hash: pendingRec.postHash
+                };
+                newData.records[pendingRec.uid] = newPendingCreate;
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  updateNewDataFromPending: function(dataset_id, dataset, newData) {
+    var pending = dataset.pending;
+
+    if( pending && newData.records) {
+      for( var pendingHash in pending ) {
+        if( pending.hasOwnProperty(pendingHash) ) {
+          var pendingRec = pending[pendingHash];
+
+          if( pendingRec.inFlight === false ) {
+            self.consoleLog('updateNewDataFromPending - Found Non inFlight record -> action=' + pendingRec.action +' :: uid=' + pendingRec.uid  + ' :: hash=' + pendingRec.hash);
+            var newRec = newData.records[pendingRec.uid];
+            if( pendingRec.action === "update" && newRec) {
+              // Modify the new Record to have the updates from the pending record so the local dataset is consistent
+              newRec.data = pendingRec.post;
+              newRec.hash = pendingRec.postHash;
+            }
+            else if( pendingRec.action === "delete" && newRec) {
+              // Remove the record from the new dataset so the local dataset is consistent
+              delete newData.records[pendingRec.uid];
+            }
+            else if( pendingRec.action === "create" ) {
+              // Add the pending create into the new dataset so it is not lost from the UI
+              self.consoleLog('updateNewDataFromPending - re adding pending create to incomming dataset');
+              var newPendingCreate = {
+                data: pendingRec.post,
+                hash: pendingRec.postHash
+              };
+              newData.records[pendingRec.uid] = newPendingCreate;
+            }
+          }
+        }
+      }
+    }
+  },
+
   updateCrashedInFlightFromNewData: function(dataset_id, dataset, newData) {
     var updateNotifications = {
       applied: self.notifications.REMOTE_UPDATE_APPLIED,
@@ -13275,8 +10631,32 @@ var self = {
 
               // Check if the updates received contain any info about the crashed in flight update
               var crashedUpdate = newData.updates.hashes[pendingHash];
-              if( !crashedUpdate ) {
-                //TODO: review this - why we need to wait?
+              if( crashedUpdate ) {
+                // We have found an update on one of our in flight crashed records
+
+                resolvedCrashes[crashedUpdate.uid] = crashedUpdate;
+
+                self.consoleLog('updateCrashedInFlightFromNewData - Resolving status for crashed inflight pending record ' + JSON.stringify(crashedUpdate));
+
+                if( crashedUpdate.type === 'failed' ) {
+                  // Crashed update failed - revert local dataset
+                  if( crashedUpdate.action === 'create' ) {
+                    self.consoleLog('updateCrashedInFlightFromNewData - Deleting failed create from dataset');
+                    delete dataset.data[crashedUpdate.uid];
+                  }
+                  else if ( crashedUpdate.action === 'update' || crashedUpdate.action === 'delete' ) {
+                    self.consoleLog('updateCrashedInFlightFromNewData - Reverting failed ' + crashedUpdate.action + ' in dataset');
+                    dataset.data[crashedUpdate.uid] = {
+                      data : pendingRec.pre,
+                      hash : pendingRec.preHash
+                    };
+                  }
+                }
+
+                delete pending[pendingHash];
+                self.doNotify(dataset_id, crashedUpdate.uid, updateNotifications[crashedUpdate.type], crashedUpdate);
+              }
+              else {
                 // No word on our crashed update - increment a counter to reflect another sync that did not give us
                 // any update on our crashed record.
                 if( pendingRec.crashedCount ) {
@@ -13308,9 +10688,15 @@ var self = {
           if( pendingRec.inFlight && pendingRec.crashed) {
             if( pendingRec.crashedCount > dataset.config.crashed_count_wait ) {
               self.consoleLog('updateCrashedInFlightFromNewData - Crashed inflight pending record has reached crashed_count_wait limit : ' + JSON.stringify(pendingRec));
-              self.consoleLog('updateCrashedInFlightFromNewData - Retryig crashed inflight pending record');
-              pendingRec.crashed = false;
-              pendingRec.inFlight = false;
+              if( dataset.config.resend_crashed_updates ) {
+                self.consoleLog('updateCrashedInFlightFromNewData - Retryig crashed inflight pending record');
+                pendingRec.crashed = false;
+                pendingRec.inFlight = false;
+              }
+              else {
+                self.consoleLog('updateCrashedInFlightFromNewData - Deleting crashed inflight pending record');
+                delete pending[pendingHash];
+              }
             }
           }
         }
@@ -13349,22 +10735,34 @@ var self = {
         if(meta.hasOwnProperty(uid)){
           var metadata = meta[uid];
           var pendingHash = metadata.pendingUid;
-          self.consoleLog("updateMetaFromNewData - Found metadata with uid = " + uid + " :: pendingHash = " + pendingHash);
+          var previousPendingHash = metadata.previousPendingUid;
+          self.consoleLog("updateMetaFromNewData - Found metadata with uid = " + uid + " :: pendingHash = " + pendingHash + " :: previousPendingHash =" + previousPendingHash);
+          var previousPendingResolved = true;
           var pendingResolved = true;
-  
+          if(previousPendingHash){
+            //we have previous pending in meta data, see if it's resolved
+            previousPendingResolved = false;
+            var resolved = newData.updates.hashes[previousPendingHash];
+            if(resolved){
+              self.consoleLog("updateMetaFromNewData - Found previousPendingUid in meta data resolved - resolved = " + JSON.stringify(resolved));
+              //the previous pending is resolved in the cloud
+              metadata.previousPendingUid = undefined;
+              previousPendingResolved = true;
+            }
+          }
           if(pendingHash){
             //we have current pending in meta data, see if it's resolved
             pendingResolved = false;
-            var hashresolved = newData.updates.hashes[pendingHash];
-            if(hashresolved){
-              self.consoleLog("updateMetaFromNewData - Found pendingUid in meta data resolved - resolved = " + JSON.stringify(hashresolved));
+            var resolved = newData.updates.hashes[pendingHash];
+            if(resolved){
+              self.consoleLog("updateMetaFromNewData - Found pendingUid in meta data resolved - resolved = " + JSON.stringify(resolved));
               //the current pending is resolved in the cloud
               metadata.pendingUid = undefined;
               pendingResolved = true;
             }
           }
 
-          if(pendingResolved){
+          if(previousPendingResolved && pendingResolved){
             self.consoleLog("updateMetaFromNewData - both previous and current pendings are resolved for meta data with uid " + uid + ". Delete it.");
             //all pendings are resolved, the entry can be removed from meta data
             delete meta[uid];
@@ -13438,8 +10836,7 @@ module.exports = {
   checkHasCustomSync: self.checkHasCustomSync,
   clearCache: self.clearCache
 };
-
-},{"../../libs/generated/crypto":1,"../../libs/generated/lawnchair":2,"./api_act":22,"./api_cloud":24}],51:[function(_dereq_,module,exports){
+},{"../../libs/generated/crypto":1,"../../libs/generated/lawnchair":2,"./api_act":19,"./api_cloud":21,"JSON":3}],46:[function(_dereq_,module,exports){
 module.exports = {
   createUUID : function () {
     //from http://stackoverflow.com/questions/105034/how-to-create-a-guid-uuid-in-javascript
@@ -13456,14 +10853,13 @@ module.exports = {
   }
 };
 
-},{}],52:[function(_dereq_,module,exports){
+},{}],47:[function(_dereq_,module,exports){
 var initializer = _dereq_("./initializer");
 var events = _dereq_("./events");
 var CloudHost = _dereq_("./hosts");
 var constants = _dereq_("./constants");
 var logger = _dereq_("./logger");
-var data = _dereq_('./data');
-var fhparams = _dereq_('./fhparams');
+
 
 //the cloud configurations
 var cloud_host;
@@ -13483,25 +10879,19 @@ var ready = function(cb){
     if(!is_initialising){
       is_initialising = true;
       var fhinit = function(){
-        data.sessionManager.read(function(err, session){
-          //load the persisted sessionToken and set it for the session
-          if(session && session.sessionToken){
-            fhparams.setAuthSessionToken(session.sessionToken);
+        initializer.init(function(err, initRes){
+          is_initialising = false;
+          if(err){
+            init_error = err;
+            return events.emit(constants.INIT_EVENT, err);
+          } else {
+            init_error = null;
+            is_cloud_ready = true;
+            cloud_host = new CloudHost(initRes.cloud);
+            return events.emit(constants.INIT_EVENT, null, {host: getCloudHostUrl()});
           }
-          initializer.init(function(err, initRes){
-            is_initialising = false;
-            if(err){
-              init_error = err;
-              return events.emit(constants.INIT_EVENT, err);
-            } else {
-              init_error = null;
-              is_cloud_ready = true;
-              cloud_host = new CloudHost(initRes.cloud);
-              return events.emit(constants.INIT_EVENT, null, {host: getCloudHostUrl()});
-            }
-          });
         });
-      };
+      }
       if(typeof window.cordova !== "undefined" || typeof window.phonegap !== "undefined"){
         //if we are running inside cordova/phonegap, only init after device is ready to ensure the device id is the right one
         document.addEventListener("deviceready", fhinit, false);
@@ -13510,11 +10900,11 @@ var ready = function(cb){
       }
     }
   }
-};
+}
 
 var getCloudHost = function(){
   return cloud_host;
-};
+}
 
 var getCloudHostUrl = function(){
   if(typeof cloud_host !== "undefined"){
@@ -13523,15 +10913,15 @@ var getCloudHostUrl = function(){
   } else {
     return undefined;
   }
-};
+}
 
 var isReady = function(){
   return is_cloud_ready;
-};
+}
 
 var getInitError = function(){
   return init_error;
-};
+}
 
 //for test
 var reset = function(){
@@ -13542,7 +10932,7 @@ var reset = function(){
   ready(function(){
     
   });
-};
+}
 
 ready(function(error, host){
   if(error){
@@ -13563,9 +10953,9 @@ module.exports = {
   getCloudHostUrl: getCloudHostUrl,
   getInitError: getInitError,
   reset: reset
-};
-},{"./appProps":29,"./constants":31,"./data":33,"./events":35,"./fhparams":36,"./hosts":38,"./initializer":39,"./logger":42}]},{},[19])
-(19)
+}
+},{"./appProps":25,"./constants":27,"./events":30,"./hosts":33,"./initializer":34,"./logger":37}]},{},[16])
+(16)
 });
 ;
 (function(root) {
@@ -15075,6 +12465,9 @@ module.exports = {
     file: function(p, s, f) {
       f('file_nosupport');
     },
+    push: function(p, s, f) {
+      f('push_nosupport');
+    },
     env: function(p, s, f) {
       s({
         height: window.innerHeight,
@@ -15464,6 +12857,10 @@ module.exports = {
     }, $fh.__dest__.file);
   };
 
+  $fh.push = function() {
+    handleargs(arguments, {}, $fh.__dest__.push);
+  };
+
   // new functions
   $fh.env = function() {
     handleargs(arguments, {}, function(p, s, f) {
@@ -15661,7 +13058,6 @@ module.exports = {
   root.$fh = $fh;
 
 })(this);
-
 /**
  * FeedHenry License
  */
@@ -15748,9 +13144,6 @@ appForm.utils = function(module) {
   module.getTime = getTime;
   module.send=send;
   module.isPhoneGap = isPhoneGap;
-  module.generateGlobalEventName = function(type, eventName){
-    return "" + type + ":" + eventName;
-  };
 
   function isPhoneGap() {
     return (typeof window.Phonegap !== "undefined" || typeof window.cordova !== "undefined");
@@ -15837,8 +13230,7 @@ appForm.utils = function(module) {
         readAsBase64Encoded: readAsBase64Encoded,
         readAsFile: readAsFile,
         fileToBase64: fileToBase64,
-        getBasePath: getBasePath,
-        clearFileSystem: clearFileSystem
+        getBasePath: getBasePath
     };
     var fileSystemAvailable = false;
     var _requestFileSystem = function() {
@@ -16020,33 +13412,6 @@ appForm.utils = function(module) {
             });
         });
     }
-
-
-    /**
-     * clearFileSystem - Clearing All Of The Files In the file system.
-     *
-     * @param  {type} cb       description
-     * @return {type}          description
-     */
-    function clearFileSystem(cb){
-      function gotFS(fileSystem) {
-          var reader = fileSystem.root.createReader();
-          reader.readEntries(gotList, cb);
-      }
-
-      function gotList(entries) {
-          async.forEachSeries(entries, function(entry, cb){
-            if(entry.isDirectory){
-              entry.removeRecursively(cb, cb);
-            } else {
-              entry.remove(cb, cb);
-            }
-          }, cb);
-      }
-
-      _requestFileSystem(PERSISTENT, 0, gotFS, cb);
-    }
-
     /**
      * Read a file as text
      * @param  {[type]}   fileName [description]
@@ -16069,7 +13434,7 @@ appForm.utils = function(module) {
                     try {
                         text = decodeURIComponent(text);
                     } catch (e) {
-
+                        
                     }
                     return cb(null, text);
                 };
@@ -16136,10 +13501,6 @@ appForm.utils = function(module) {
                 return cb(err);
             }
             fe.file(function(file) {
-                //issue CB-9403 on file plugin of windows missing fullPath on File, copying it here from FileEntry
-                if (window.device && window.device.platform === "windows" && typeof (file.fullPath) === "undefined") {
-                    file.fullPath = fe.nativeURL;
-                }
                 cb(null, file);
             }, function(e) {
                 cb(e);
@@ -16150,7 +13511,7 @@ appForm.utils = function(module) {
     function _resolveFile(fileName, cb){
       //This is necessary to get the correct uri for apple. The URI in a file object for iphone does not have the file:// prefix.
       //This gives invalid uri errors when trying to resolve.
-      if(fileName.indexOf("file://") === -1 && window.device.platform !== "Win32NT" && window.device.platform !== "windows"){
+      if(fileName.indexOf("file://") === -1 && window.device.platform !== "Win32NT"){
         fileName = "file://" + fileName;
       }
       window.resolveLocalFileSystemURI(fileName, function(fileEntry){
@@ -16227,7 +13588,6 @@ appForm.utils = function(module) {
     _checkEnv();
     return module;
 }(appForm.utils || {});
-
 appForm.utils = function (module) {
   module.takePhoto = takePhoto;
   module.isPhoneGapCamAvailable = isPhoneGapAvailable;
@@ -16254,17 +13614,9 @@ appForm.utils = function (module) {
     checkEnv();
     _html5Camera(params, cb);
   }
-
   function cancelHtml5Camera() {
-    if (localMediaStream){
-      if (localMediaStream.stop) {
-        localMediaStream.stop();
-      } else{
-        var tracks = localMediaStream.getTracks();
-        if(tracks && tracks.length!==0){
-          tracks[0].stop();
-        }
-      }
+    if (localMediaStream) {
+      localMediaStream.stop();
       localMediaStream = null;
     }
   }
@@ -17174,32 +14526,17 @@ appForm.models = function (module) {
     }
   };
 
-  Model.prototype.getType = function(){
-    return this.get('_type');
-  };
-
   Model.prototype.clearEvents = function(){
     this.events = {};
   };
   Model.prototype.emit = function () {
     var args = Array.prototype.slice.call(arguments, 0);
-    var eventName = args.shift();
-    var funcs = this.events[eventName];
-
-    var globalArgs = args.slice(0);
-
+    var e = args.shift();
+    var funcs = this.events[e];
     if (funcs && funcs.length > 0) {
       for (var i = 0; i < funcs.length; i++) {
         var func = funcs[i];
         func.apply(this, args);
-        //Also emitting a global event if the
-        var type = this.getType();
-        if(type){
-          var globalEmitName = this.utils.generateGlobalEventName(type, eventName);
-          globalArgs.unshift(globalEmitName);
-          $fh.forms.emit.apply(this, globalArgs);
-        }
-
       }
     }
   };
@@ -18237,32 +15574,6 @@ appForm.models = function(module) {
     };
     Submissions.prototype.getSubmissionMetaList = Submissions.prototype.getSubmissions;
     //function alias
-
-
-    //Getting A Submission Model By Local ID
-    Submissions.prototype.getSubmissionByLocalId = function(localId, cb){
-        var self = this;
-        $fh.forms.log.d("Submissions getSubmissionByLocalId", localId);
-        var submissionMeta = self.findMetaByLocalId(localId);
-        if(!submissionMeta){
-            return cb("No submissions for localId: " + localId);
-        }
-
-        self.getSubmissionByMeta(submissionMeta, cb);
-    };
-
-    //Getting A Submission Model By Remote ID
-    Submissions.prototype.getSubmissionByRemoteId = function(remoteId, cb){
-        var self = this;
-        $fh.forms.log.d("Submissions getSubmissionByRemoteId", remoteId);
-        var submissionMeta = self.findMetaByRemoteId(remoteId);
-        if(!submissionMeta){
-            return cb("No submissions for remoteId: " + remoteId);
-        }
-
-        self.getSubmissionByMeta(submissionMeta, cb);
-    };
-
     Submissions.prototype.findMetaByLocalId = function(localId) {
         $fh.forms.log.d("Submissions findMetaByLocalId", localId);
         var submissions = this.get('submissions');
@@ -18273,7 +15584,7 @@ appForm.models = function(module) {
             }
         }
 
-        $fh.forms.log.e("Submissions findMetaByLocalId: No submissions for localId: ", localId);
+        //$fh.forms.log.e("Submissions findMetaByLocalId: No submissions for localId: ", localId);
         return null;
     };
 
@@ -18670,7 +15981,7 @@ appForm.models = function(module) {
       } else {
         self.emit('validationerror', validation);
         cb(null, validation.valid);
-      }
+      }  
     });
   };
 
@@ -18684,9 +15995,8 @@ appForm.models = function(module) {
     $fh.forms.log.d("Submission submit: ");
     var targetStatus = 'pending';
     var validateResult = true;
-
+    
     this.set('timezoneOffset', appForm.utils.getTime(true));
-    this.pruneNullValues();
     that.performValidation(function(err, res){
       if (err) {
         $fh.forms.log.e("Submission submit validateForm: Error validating form ", err);
@@ -18710,7 +16020,7 @@ appForm.models = function(module) {
           that.emit('validationerror', validation);
           cb('Validation error');
         }
-      }
+      }  
     });
   };
   Submission.prototype.getUploadTask = function(cb) {
@@ -18818,7 +16128,6 @@ appForm.models = function(module) {
     var targetStatus = 'downloaded';
 
     that.set('downloadedDate', appForm.utils.getTime());
-    that.pruneNullValues();
     that.changeStatus(targetStatus, function(err) {
       if (err) {
         $fh.forms.log.e("Error setting downloaded status " + err);
@@ -18829,25 +16138,6 @@ appForm.models = function(module) {
         cb(null, that);
       }
     });
-  };
-
-
-  /**
-   * Submission.prototype.pruneNullValues - Pruning null values from the submission
-   *
-   * @return {type}  description
-   */
-  Submission.prototype.pruneNullValues = function(){
-    var formFields = this.getFormFields();
-
-    for(var formFieldIndex = 0; formFieldIndex < formFields.length; formFieldIndex++){
-      formFields[formFieldIndex].fieldValues = formFields[formFieldIndex].fieldValues || [];
-      formFields[formFieldIndex].fieldValues = formFields[formFieldIndex].fieldValues.filter(function(fieldValue){
-        return fieldValue !== null && typeof(fieldValue) !== "undefined";
-      });
-    }
-
-    this.setFormFields(formFields);
   };
   //joint form id and submissions timestamp.
   Submission.prototype.genLocalId = function() {
@@ -18949,9 +16239,6 @@ appForm.models = function(module) {
   Submission.prototype.getStatus = function() {
     return this.get('status');
   };
-  Submission.prototype.getErrorMessage = function(){
-    return this.get('errorMessage', 'No Error');
-  };
   /**
    * check if a target status is valid
    * @param  {[type]}  targetStatus [description]
@@ -19020,9 +16307,9 @@ appForm.models = function(module) {
     for (var formFieldIndex = 0; formFieldIndex < formFields.length; formFieldIndex++) {
       var tmpFieldValues = formFields[formFieldIndex].fieldValues || [];
       for (var fieldValIndex = 0; fieldValIndex < tmpFieldValues.length; fieldValIndex++) {
-        if(tmpFieldValues[fieldValIndex] && tmpFieldValues[fieldValIndex].fileName){
+        if(tmpFieldValues[fieldValIndex].fileName){
           submissionFiles.push(tmpFieldValues[fieldValIndex]);
-        } else if(tmpFieldValues[fieldValIndex] && tmpFieldValues[fieldValIndex].hashName){
+        } else if(tmpFieldValues[fieldValIndex].hashName){
           submissionFiles.push(tmpFieldValues[fieldValIndex]);
         }
       }
@@ -19048,82 +16335,64 @@ appForm.models = function(module) {
     var that = this;
     var fieldId = params.fieldId;
     var inputValue = params.value;
-    var index = params.index === undefined ? -1 : params.index;
 
-    if(!fieldId){
-      return cb("Invalid parameters. fieldId is required");
-    }
-
-    //Transaction entries are not saved to memory, they are only saved when the transaction has completed.
-    function processTransaction(form, fieldModel){
-      if (!that.tmpFields[fieldId]) {
-        that.tmpFields[fieldId] = [];
-      }
-
-      params.isStore = false;//Don't store the files until the transaction is complete
-      fieldModel.processInput(params, function(err, result) {
-        if (err) {
-          return cb(err);
-        } else {
-          if (index > -1) {
-            that.tmpFields[fieldId][index] = result;
-          } else {
-            that.tmpFields[fieldId].push(result);
+    if(inputValue !== null && typeof(inputValue) !== 'undefined'){
+      var index = params.index === undefined ? -1 : params.index;
+      this.getForm(function(err, form) {
+        var fieldModel = form.getFieldModelById(fieldId);
+        if (that.transactionMode) {
+          if (!that.tmpFields[fieldId]) {
+            that.tmpFields[fieldId] = [];
           }
 
-          return cb(null, result);
+          params.isStore = false;//Don't store the files until the transaction is complete
+          fieldModel.processInput(params, function(err, result) {
+            if (err) {
+              return cb(err);
+            } else {
+              if (index > -1) {
+                that.tmpFields[fieldId][index] = result;
+              } else {
+                that.tmpFields[fieldId].push(result);
+              }
+
+              return cb(null, result);
+            }
+          });
+        } else {
+          var target = that.getInputValueObjectById(fieldId);
+
+          //File already exists for this input, overwrite rather than create a new file
+          if(target.fieldValues[index]){
+            if(typeof(target.fieldValues[index].hashName) === "string"){
+              params.previousFile = target.fieldValues[index];
+            }
+          }
+
+
+          fieldModel.processInput(params, function(err, result) {
+            if (err) {
+              return cb(err);
+            } else {
+              if (index > -1) {
+                target.fieldValues[index] = result;
+              } else {
+                target.fieldValues.push(result);
+              }
+
+              if(typeof(result.hashName) === "string"){
+                that.pushFile(result.hashName);
+              }
+
+              return cb(null, result);
+            }
+          });
         }
       });
+    } else {
+      $fh.forms.log.e("addInputValue: Input value was null. Params: " + fieldId);
+      return cb(null, {});
     }
-
-    //Direct entries are saved immediately to local storage when they are input.
-    function processDirectStore(form, fieldModel){
-      var target = that.getInputValueObjectById(fieldId);
-
-      //File already exists for this input, overwrite rather than create a new file
-      //If pushing the value to the end of the list, then there will be no previous value
-      if(index > -1 && target.fieldValues[index]){
-        if(typeof(target.fieldValues[index].hashName) === "string"){
-          params.previousFile = target.fieldValues[index];
-        } else {
-          params.previousValue = target.fieldValues[index];
-        }
-      }
-
-      fieldModel.processInput(params, function(err, result) {
-        if (err) {
-          return cb(err);
-        } else {
-          if (index > -1) {
-            target.fieldValues[index] = result;
-          } else {
-            target.fieldValues.push(result);
-          }
-
-          if(result && typeof(result.hashName) === "string"){
-            that.pushFile(result.hashName);
-          }
-
-          return cb(null, result);
-        }
-      });
-    }
-
-    function gotForm(err, form) {
-      var fieldModel = form.getFieldModelById(fieldId);
-
-      if(!fieldModel){
-        return cb("No field model found for fieldId " + fieldId);
-      }
-
-      if (that.transactionMode) {
-        processTransaction(form, fieldModel);
-      } else {
-        processDirectStore(form, fieldModel);
-      }
-    }
-
-    this.getForm(gotForm);
   };
   Submission.prototype.pushFile = function(hashName){
     var subFiles = this.get('filesInSubmission', []);
@@ -19230,45 +16499,34 @@ appForm.models = function(module) {
    * remove an input value from submission
    * @param  {[type]} fieldId field id
    * @param  {[type]} index (optional) the position of the value will be removed if it is repeated field.
-   * @param  {function} [Optional callback]
    * @return {[type]}         [description]
    */
-  Submission.prototype.removeFieldValue = function(fieldId, index, callback) {
-    callback = callback || function(){};
+  Submission.prototype.removeFieldValue = function(fieldId, index) {
     var self = this;
     var targetArr = [];
-    var valsRemoved = {};
+    var valRemoved = {};
     if (this.transactionMode) {
       targetArr = this.tmpFields.fieldId;
     } else {
-      targetArr = this.getInputValueObjectById(fieldId).fieldValues;
+      targetArr = this.getInputValueObjectById(fieldId).fieldId;
     }
-    //If no index is supplied, all values are removed.
     if (typeof index === 'undefined') {
-      valsRemoved = targetArr.splice(0, targetArr.length);
+      valRemoved = targetArr.splice(0, targetArr.length);
     } else {
       if (targetArr.length > index) {
-        valsRemoved = targetArr.splice(index, 1, null);
+        valRemoved = targetArr.splice(index, 1);
       }
     }
 
-    //Clearing up any files from local storage.
-    async.forEach(valsRemoved, function(valRemoved, cb){
-      if(valRemoved && valRemoved.hashName){
-        appForm.stores.localStorage.removeEntry(valRemoved.hashName, function(err){
-          if(err){
-            $fh.forms.log.e("Error removing file: ", err, valRemoved);
-          } else {
-            self.removeFileValue(valRemoved.hashName);
-          }
-          return cb(null, valRemoved);
-        });
-      } else {
-        return cb();
-      }
-    }, function(err){
-      callback(err);
-    });
+    if(typeof(valRemoved.hashName) === "string"){
+      appForm.stores.localStorage.removeEntry(valRemoved.hashName, function(err){
+        if(err){
+          $fh.forms.log.e("Error removing file: ", err);
+        } else {
+          self.removeFileValue(valRemoved.hashName);
+        }
+      });
+    }
   };
   Submission.prototype.getInputValueObjectById = function(fieldId) {
     var formFields = this.getFormFields();
@@ -19346,24 +16604,18 @@ appForm.models = function(module) {
     });
   };
 
-
-  /**
-   * Submission.prototype.getFormFields - Get the form field input values
-   *
-   * @return {type}                   description
-   */
   Submission.prototype.getFormFields = function(){
-    return this.get("formFields", []);
-  };
+    var formFields = this.get("formFields", []);
 
-  /**
-   * Submission.prototype.getFormFields - Set the form field input values
-   *
-   * @param  {boolean} includeNullValues flag on whether to include null values or not.
-   * @return {type}                   description
-   */
-  Submission.prototype.setFormFields = function(values){
-    return this.get("formFields", values);
+    //Removing null values
+    for(var formFieldIndex = 0; formFieldIndex < formFields.length; formFieldIndex++){
+      formFields[formFieldIndex].fieldValues = formFields[formFieldIndex].fieldValues || [];
+      formFields[formFieldIndex].fieldValues = formFields[formFieldIndex].fieldValues.filter(function(fieldValue){
+        return fieldValue !== null && typeof(fieldValue) !== "undefined";
+      });
+    }
+
+    return formFields;
   };
 
   Submission.prototype.getFileFieldsId = function(cb){
@@ -19484,17 +16736,15 @@ appForm.models = function(module) {
     });
   };
   Submission.prototype.getRemoteSubmissionId = function() {
-    return this.get("submissionId") || this.get('_id');
+    return this.get("submissionId", "");
   };
   Submission.prototype.setRemoteSubmissionId = function(submissionId){
     if(submissionId){
       this.set("submissionId", submissionId);
-      this.set("_id", submissionId);
     }
   };
   return module;
 }(appForm.models || {});
-
 /**
  * Field model for form
  * @param  {[type]} module [description]
@@ -19804,14 +17054,9 @@ appForm.models.Field = function (module) {
         //Submitting an existing file already saved, no need to save.
         return cb(null, previousFile);
       }
-      //If the value has no extension and there is a previous, then it is the same file -- just the hashed version.
-      if(fileType === "application/octet-stream"){
-        return cb(null, previousFile);
-      }
     }
 
-    //The file to be submitted is new
-    previousFile =  {
+    var rtnJSON = {
       'fileName': fileName,
       'fileSize': file.size,
       'fileType': fileType,
@@ -19821,13 +17066,15 @@ appForm.models.Field = function (module) {
       'contentType': 'binary'
     };
 
+    //The file to be submitted is new
+    previousFile = rtnJSON;
+
     var name = fileName + new Date().getTime() + Math.ceil(Math.random() * 100000);
     appForm.utils.md5(name, function (err, res) {
       hashName = res;
       if (err) {
         hashName = name;
       }
-
       hashName = 'filePlaceHolder' + hashName;
 
       if(fileName.length === 0){
@@ -20159,7 +17406,6 @@ appForm.models = function (module) {
         currentSection = "sectionBreak" + i;
         sectionList[currentSection] = sectionList[currentSection] ? sectionList[currentSection] : {fields: []};
         sectionList[currentSection].title = fieldModel.get('name', "Section " + (i+1));
-        sectionList[currentSection].description = fieldModel.get('helpText', "Section " + (i+1));
         sectionList[currentSection].fields.push(fieldModel);
       }
     }
@@ -20194,7 +17440,6 @@ appForm.models = function (module) {
 
     return module;
 }(appForm.models || {});
-
 
 /**
  * Manages submission uploading tasks
@@ -21186,7 +18431,7 @@ appForm.models = function (module) {
         if(_err){
           return cb(_err);
         }
-        model.setRemoteSubmissionId(submissionId);
+        model.set('submissionId', submissionId);
         model.submitted(cb);
       });
     }
@@ -21312,15 +18557,12 @@ appForm.models = function (module) {
         'totalSize': self.getTotalSize(),
         'uploaded': self.getUploadedSize(),
         'retryAttempts': self.getRetryAttempts(),
-        'submissionTransferType': self.get('submissionTransferType'),
-        'submissionRemoteId': self.get('submissionId'),
-        'submissionLocalId': self.get('submissionLocalId')
+        'submissionTransferType': self.get('submissionTransferType')
       };
     var progress = self.getCurrentTask();
     if (progress === null) {
       return rtn;
     } else {
-      //Boolean specifying if the submission JSON has been uploaded.
       rtn.formJSON = true;
       rtn.currentFileIndex = progress;
     }
@@ -21509,44 +18751,6 @@ appForm.api = function (module) {
   module.downloadSubmission = downloadSubmission;
   module.init = appForm.init;
   module.log=appForm.models.log;
-  module._events = {};
-
-  //Registering For Global Events
-  module.on = function(name, func, callOnce){
-    if (!module._events[name]) {
-      module._events[name] = [];
-    }
-    if (module._events[name].indexOf(func) < 0) {
-      module._events[name].push({
-        callOnce: callOnce,
-        func: func
-      });
-    }
-  };
-
-  module.once = function(name, func){
-    module.on(name, func, true);
-  };
-
-  //Emitting A Global Event
-  module.emit = function () {
-    var args = Array.prototype.slice.call(arguments, 0);
-    var eventName = args.shift();
-    var funcDetailsArray = module._events[eventName];
-    if (funcDetailsArray && funcDetailsArray.length > 0) {
-      for (var i = 0; i < funcDetailsArray.length; i++) {
-        var functionDetails = funcDetailsArray[i];
-        var functionToCall = funcDetailsArray[i].func;
-        //If the function was not already called, or is not only set to call once, the call the function,
-        //Otherwise, don't call it.
-        if(!functionDetails.called || !functionDetails.callOnce){
-          functionDetails.called = true;
-          functionToCall.apply(this, args);
-        }
-      }
-    }
-  };
-
   var _submissions = null;
   var waitOnSubmission = {};
   var formConfig = appForm.models.config;
@@ -21776,18 +18980,13 @@ appForm.api = function (module) {
      * @param {function} cb (err, downloadTask)
      * */
     function downloadSubmission(params, cb) {
-      $fh.forms.log.d("downloadSubmission called", params);
       params = params ? params : {};
-      var waitCallbackPassed = typeof(cb) === "function";
-      cb = typeof(cb) === "function" ? cb : function(){};
-
-      //There should be a submission id to download.
-      if(!params.submissionId){
-        $fh.forms.log.e("No submissionId passed to download a submission");
-        return cb("No submissionId passed to download a submission");
-      }
-
+      //cb = cb ? cb : defaultFunction;
       var submissionToDownload = null;
+
+      if(typeof(cb) !== 'function'){
+        return null;
+      }
 
       function finishSubmissionDownload(err) {
         err = typeof(err) === "string" && err.length === 24 ? null : err;
@@ -21810,65 +19009,64 @@ appForm.api = function (module) {
         }
       }
 
-      $fh.forms.log.d("downloadSubmission SubmissionId exists" + params.submissionId);
-      var submissionAlreadySaved = appForm.models.submissions.findMetaByRemoteId(params.submissionId);
+      $fh.forms.log.d("downloadSubmission called", params);
 
-      if (submissionAlreadySaved === null) {
+      if (params.submissionId) {
+        $fh.forms.log.d("downloadSubmission SubmissionId exists" + params.submissionId);
+        var submissionAlreadySaved = appForm.models.submissions.findMetaByRemoteId(params.submissionId);
 
-        $fh.forms.log.d("downloadSubmission submission does not exist, downloading", params);
-        submissionToDownload = new appForm.models.submission.newInstance(null, {
-          submissionId: params.submissionId
-        });
+        if (submissionAlreadySaved === null) {
 
-        submissionToDownload.on('error', finishSubmissionDownload);
+          $fh.forms.log.d("downloadSubmission submission does not exist, downloading", params);
+          submissionToDownload = new appForm.models.submission.newInstance(null, {
+            submissionId: params.submissionId
+          });
 
-        submissionToDownload.on('downloaded', finishSubmissionDownload);
+          submissionToDownload.on('error', finishSubmissionDownload);
 
-        if (typeof(params.updateFunction) === 'function') {
-          submissionToDownload.on('progress', params.updateFunction);
-        }
+          submissionToDownload.on('downloaded', finishSubmissionDownload);
 
-        //If there is no callback function, then just trigger the download.
-        //Users can register global listeners for submission downloads events now.
-        if(typeof(cb) === "function"){
-          if(waitOnSubmission[params.submissionId]){
-            waitOnSubmission[params.submissionId].push(cb);
-          } else {
-            waitOnSubmission[params.submissionId] = [];
-            waitOnSubmission[params.submissionId].push(cb);
+          if (typeof(params.updateFunction) === 'function') {
+            submissionToDownload.on('progress', params.updateFunction);
           }
-        }
 
-        submissionToDownload.download(function(err) {
-          if (err) {
-            $fh.forms.log.e("Error queueing submission for download " + err);
-            return cb(err);
-          }
-        });
-      } else {
-        $fh.forms.log.d("downloadSubmission submission exists", params);
-
-        //Submission was created, but not finished downloading
-        if (submissionAlreadySaved.status !== "downloaded" && submissionAlreadySaved.status !== "submitted") {
+          
           if(typeof(cb) === "function"){
             if(waitOnSubmission[params.submissionId]){
-              waitOnSubmission[params.submissionId].push(cb);
+              waitOnSubmission[params.submissionId].push(cb);  
             } else {
-              waitOnSubmission[params.submissionId] = [];
-              waitOnSubmission[params.submissionId].push(cb);
-            }
+               waitOnSubmission[params.submissionId] = [];
+               waitOnSubmission[params.submissionId].push(cb);  
+            }  
           }
-        } else {
-          appForm.models.submissions.getSubmissionByMeta(submissionAlreadySaved, function(err, submission){
-            if(err){
+
+          submissionToDownload.download(function(err) {
+            if (err) {
+              $fh.forms.log.e("Error queueing submission for download " + err);
               return cb(err);
             }
-
-            //If the submission has already been downloaded - emit the downloaded event again
-            submission.emit('downloaded', submission.getRemoteSubmissionId());
-            return cb(undefined, submission);
           });
+        } else {
+          $fh.forms.log.d("downloadSubmission submission exists", params);
+
+          //Submission was created, but not finished downloading
+          if (submissionAlreadySaved.status !== "downloaded" && submissionAlreadySaved.status !== "submitted") {
+            if(typeof(cb) === "function"){
+              if(waitOnSubmission[params.submissionId]){
+                waitOnSubmission[params.submissionId].push(cb);  
+              } else {
+                 waitOnSubmission[params.submissionId] = [];
+                 waitOnSubmission[params.submissionId].push(cb);  
+              }  
+            }
+          } else {
+            appForm.models.submissions.getSubmissionByMeta(submissionAlreadySaved, cb);
+          }
+
         }
+      } else {
+        $fh.forms.log.e("No submissionId passed to download a submission");
+        return cb("No submissionId passed to download a submission");
       }
     }
   return module;
@@ -21880,9 +19078,9 @@ if (typeof $fh === 'undefined') {
 if ($fh.forms === undefined) {
   $fh.forms = appForm.api;
 }
-/*! fh-forms - v1.3.0 -  */
+/*! fh-forms - v0.10.0 -  */
 /*! async - v0.2.9 -  */
-/*! 2016-02-29 */
+/*! 2014-11-03 */
 /* This is the prefix file */
 if(appForm){
   appForm.RulesEngine=rulesEngine;
@@ -21891,11 +19089,11 @@ if(appForm){
 function rulesEngine (formDef) {
   var define = {};
   var module = {exports:{}}; // create a module.exports - async will load into it
-/* jshint ignore:start */
-/* End of prefix file */
+  /* jshint ignore:start */
+  /* End of prefix file */
 
-/*global setImmediate: false, setTimeout: false, console: false */
-(function () {
+  /*global setImmediate: false, setTimeout: false, console: false */
+  (function () {
 
     var async = {};
 
@@ -21908,244 +19106,244 @@ function rulesEngine (formDef) {
     }
 
     async.noConflict = function () {
-        root.async = previous_async;
-        return async;
+      root.async = previous_async;
+      return async;
     };
 
     function only_once(fn) {
-        var called = false;
-        return function() {
-            if (called) throw new Error("Callback was already called.");
-            called = true;
-            fn.apply(root, arguments);
-        }
+      var called = false;
+      return function() {
+        if (called) throw new Error("Callback was already called.");
+        called = true;
+        fn.apply(root, arguments);
+      }
     }
 
     //// cross-browser compatiblity functions ////
 
     var _each = function (arr, iterator) {
-        if (arr.forEach) {
-            return arr.forEach(iterator);
-        }
-        for (var i = 0; i < arr.length; i += 1) {
-            iterator(arr[i], i, arr);
-        }
+      if (arr.forEach) {
+        return arr.forEach(iterator);
+      }
+      for (var i = 0; i < arr.length; i += 1) {
+        iterator(arr[i], i, arr);
+      }
     };
 
     var _map = function (arr, iterator) {
-        if (arr.map) {
-            return arr.map(iterator);
-        }
-        var results = [];
-        _each(arr, function (x, i, a) {
-            results.push(iterator(x, i, a));
-        });
-        return results;
+      if (arr.map) {
+        return arr.map(iterator);
+      }
+      var results = [];
+      _each(arr, function (x, i, a) {
+        results.push(iterator(x, i, a));
+      });
+      return results;
     };
 
     var _reduce = function (arr, iterator, memo) {
-        if (arr.reduce) {
-            return arr.reduce(iterator, memo);
-        }
-        _each(arr, function (x, i, a) {
-            memo = iterator(memo, x, i, a);
-        });
-        return memo;
+      if (arr.reduce) {
+        return arr.reduce(iterator, memo);
+      }
+      _each(arr, function (x, i, a) {
+        memo = iterator(memo, x, i, a);
+      });
+      return memo;
     };
 
     var _keys = function (obj) {
-        if (Object.keys) {
-            return Object.keys(obj);
+      if (Object.keys) {
+        return Object.keys(obj);
+      }
+      var keys = [];
+      for (var k in obj) {
+        if (obj.hasOwnProperty(k)) {
+          keys.push(k);
         }
-        var keys = [];
-        for (var k in obj) {
-            if (obj.hasOwnProperty(k)) {
-                keys.push(k);
-            }
-        }
-        return keys;
+      }
+      return keys;
     };
 
     //// exported async module functions ////
 
     //// nextTick implementation with browser-compatible fallback ////
     if (typeof process === 'undefined' || !(process.nextTick)) {
-        if (typeof setImmediate === 'function') {
-            async.nextTick = function (fn) {
-                // not a direct alias for IE10 compatibility
-                setImmediate(fn);
-            };
-            async.setImmediate = async.nextTick;
-        }
-        else {
-            async.nextTick = function (fn) {
-                setTimeout(fn, 0);
-            };
-            async.setImmediate = async.nextTick;
-        }
+      if (typeof setImmediate === 'function') {
+        async.nextTick = function (fn) {
+          // not a direct alias for IE10 compatibility
+          setImmediate(fn);
+        };
+        async.setImmediate = async.nextTick;
+      }
+      else {
+        async.nextTick = function (fn) {
+          setTimeout(fn, 0);
+        };
+        async.setImmediate = async.nextTick;
+      }
     }
     else {
-        async.nextTick = process.nextTick;
-        if (typeof setImmediate !== 'undefined') {
-            async.setImmediate = setImmediate;
-        }
-        else {
-            async.setImmediate = async.nextTick;
-        }
+      async.nextTick = process.nextTick;
+      if (typeof setImmediate !== 'undefined') {
+        async.setImmediate = setImmediate;
+      }
+      else {
+        async.setImmediate = async.nextTick;
+      }
     }
 
     async.each = function (arr, iterator, callback) {
-        callback = callback || function () {};
-        if (!arr.length) {
-            return callback();
-        }
-        var completed = 0;
-        _each(arr, function (x) {
-            iterator(x, only_once(function (err) {
-                if (err) {
-                    callback(err);
-                    callback = function () {};
-                }
-                else {
-                    completed += 1;
-                    if (completed >= arr.length) {
-                        callback(null);
-                    }
-                }
-            }));
-        });
+      callback = callback || function () {};
+      if (!arr.length) {
+        return callback();
+      }
+      var completed = 0;
+      _each(arr, function (x) {
+        iterator(x, only_once(function (err) {
+          if (err) {
+            callback(err);
+            callback = function () {};
+          }
+          else {
+            completed += 1;
+            if (completed >= arr.length) {
+              callback(null);
+            }
+          }
+        }));
+      });
     };
     async.forEach = async.each;
 
     async.eachSeries = function (arr, iterator, callback) {
-        callback = callback || function () {};
-        if (!arr.length) {
-            return callback();
-        }
-        var completed = 0;
-        var iterate = function () {
-            iterator(arr[completed], function (err) {
-                if (err) {
-                    callback(err);
-                    callback = function () {};
-                }
-                else {
-                    completed += 1;
-                    if (completed >= arr.length) {
-                        callback(null);
-                    }
-                    else {
-                        iterate();
-                    }
-                }
-            });
-        };
-        iterate();
+      callback = callback || function () {};
+      if (!arr.length) {
+        return callback();
+      }
+      var completed = 0;
+      var iterate = function () {
+        iterator(arr[completed], function (err) {
+          if (err) {
+            callback(err);
+            callback = function () {};
+          }
+          else {
+            completed += 1;
+            if (completed >= arr.length) {
+              callback(null);
+            }
+            else {
+              iterate();
+            }
+          }
+        });
+      };
+      iterate();
     };
     async.forEachSeries = async.eachSeries;
 
     async.eachLimit = function (arr, limit, iterator, callback) {
-        var fn = _eachLimit(limit);
-        fn.apply(null, [arr, iterator, callback]);
+      var fn = _eachLimit(limit);
+      fn.apply(null, [arr, iterator, callback]);
     };
     async.forEachLimit = async.eachLimit;
 
     var _eachLimit = function (limit) {
 
-        return function (arr, iterator, callback) {
-            callback = callback || function () {};
-            if (!arr.length || limit <= 0) {
-                return callback();
-            }
-            var completed = 0;
-            var started = 0;
-            var running = 0;
+      return function (arr, iterator, callback) {
+        callback = callback || function () {};
+        if (!arr.length || limit <= 0) {
+          return callback();
+        }
+        var completed = 0;
+        var started = 0;
+        var running = 0;
 
-            (function replenish () {
+        (function replenish () {
+          if (completed >= arr.length) {
+            return callback();
+          }
+
+          while (running < limit && started < arr.length) {
+            started += 1;
+            running += 1;
+            iterator(arr[started - 1], function (err) {
+              if (err) {
+                callback(err);
+                callback = function () {};
+              }
+              else {
+                completed += 1;
+                running -= 1;
                 if (completed >= arr.length) {
-                    return callback();
+                  callback();
                 }
-
-                while (running < limit && started < arr.length) {
-                    started += 1;
-                    running += 1;
-                    iterator(arr[started - 1], function (err) {
-                        if (err) {
-                            callback(err);
-                            callback = function () {};
-                        }
-                        else {
-                            completed += 1;
-                            running -= 1;
-                            if (completed >= arr.length) {
-                                callback();
-                            }
-                            else {
-                                replenish();
-                            }
-                        }
-                    });
+                else {
+                  replenish();
                 }
-            })();
-        };
+              }
+            });
+          }
+        })();
+      };
     };
 
 
     var doParallel = function (fn) {
-        return function () {
-            var args = Array.prototype.slice.call(arguments);
-            return fn.apply(null, [async.each].concat(args));
-        };
+      return function () {
+        var args = Array.prototype.slice.call(arguments);
+        return fn.apply(null, [async.each].concat(args));
+      };
     };
     var doParallelLimit = function(limit, fn) {
-        return function () {
-            var args = Array.prototype.slice.call(arguments);
-            return fn.apply(null, [_eachLimit(limit)].concat(args));
-        };
+      return function () {
+        var args = Array.prototype.slice.call(arguments);
+        return fn.apply(null, [_eachLimit(limit)].concat(args));
+      };
     };
     var doSeries = function (fn) {
-        return function () {
-            var args = Array.prototype.slice.call(arguments);
-            return fn.apply(null, [async.eachSeries].concat(args));
-        };
+      return function () {
+        var args = Array.prototype.slice.call(arguments);
+        return fn.apply(null, [async.eachSeries].concat(args));
+      };
     };
 
 
     var _asyncMap = function (eachfn, arr, iterator, callback) {
-        var results = [];
-        arr = _map(arr, function (x, i) {
-            return {index: i, value: x};
+      var results = [];
+      arr = _map(arr, function (x, i) {
+        return {index: i, value: x};
+      });
+      eachfn(arr, function (x, callback) {
+        iterator(x.value, function (err, v) {
+          results[x.index] = v;
+          callback(err);
         });
-        eachfn(arr, function (x, callback) {
-            iterator(x.value, function (err, v) {
-                results[x.index] = v;
-                callback(err);
-            });
-        }, function (err) {
-            callback(err, results);
-        });
+      }, function (err) {
+        callback(err, results);
+      });
     };
     async.map = doParallel(_asyncMap);
     async.mapSeries = doSeries(_asyncMap);
     async.mapLimit = function (arr, limit, iterator, callback) {
-        return _mapLimit(limit)(arr, iterator, callback);
+      return _mapLimit(limit)(arr, iterator, callback);
     };
 
     var _mapLimit = function(limit) {
-        return doParallelLimit(limit, _asyncMap);
+      return doParallelLimit(limit, _asyncMap);
     };
 
     // reduce only has a series version, as doing reduce in parallel won't
     // work in many situations.
     async.reduce = function (arr, memo, iterator, callback) {
-        async.eachSeries(arr, function (x, callback) {
-            iterator(memo, x, function (err, v) {
-                memo = v;
-                callback(err);
-            });
-        }, function (err) {
-            callback(err, memo);
+      async.eachSeries(arr, function (x, callback) {
+        iterator(memo, x, function (err, v) {
+          memo = v;
+          callback(err);
         });
+      }, function (err) {
+        callback(err, memo);
+      });
     };
     // inject alias
     async.inject = async.reduce;
@@ -22153,33 +19351,33 @@ function rulesEngine (formDef) {
     async.foldl = async.reduce;
 
     async.reduceRight = function (arr, memo, iterator, callback) {
-        var reversed = _map(arr, function (x) {
-            return x;
-        }).reverse();
-        async.reduce(reversed, memo, iterator, callback);
+      var reversed = _map(arr, function (x) {
+        return x;
+      }).reverse();
+      async.reduce(reversed, memo, iterator, callback);
     };
     // foldr alias
     async.foldr = async.reduceRight;
 
     var _filter = function (eachfn, arr, iterator, callback) {
-        var results = [];
-        arr = _map(arr, function (x, i) {
-            return {index: i, value: x};
+      var results = [];
+      arr = _map(arr, function (x, i) {
+        return {index: i, value: x};
+      });
+      eachfn(arr, function (x, callback) {
+        iterator(x.value, function (v) {
+          if (v) {
+            results.push(x);
+          }
+          callback();
         });
-        eachfn(arr, function (x, callback) {
-            iterator(x.value, function (v) {
-                if (v) {
-                    results.push(x);
-                }
-                callback();
-            });
-        }, function (err) {
-            callback(_map(results.sort(function (a, b) {
-                return a.index - b.index;
-            }), function (x) {
-                return x.value;
-            }));
-        });
+      }, function (err) {
+        callback(_map(results.sort(function (a, b) {
+          return a.index - b.index;
+        }), function (x) {
+          return x.value;
+        }));
+      });
     };
     async.filter = doParallel(_filter);
     async.filterSeries = doSeries(_filter);
@@ -22188,574 +19386,574 @@ function rulesEngine (formDef) {
     async.selectSeries = async.filterSeries;
 
     var _reject = function (eachfn, arr, iterator, callback) {
-        var results = [];
-        arr = _map(arr, function (x, i) {
-            return {index: i, value: x};
+      var results = [];
+      arr = _map(arr, function (x, i) {
+        return {index: i, value: x};
+      });
+      eachfn(arr, function (x, callback) {
+        iterator(x.value, function (v) {
+          if (!v) {
+            results.push(x);
+          }
+          callback();
         });
-        eachfn(arr, function (x, callback) {
-            iterator(x.value, function (v) {
-                if (!v) {
-                    results.push(x);
-                }
-                callback();
-            });
-        }, function (err) {
-            callback(_map(results.sort(function (a, b) {
-                return a.index - b.index;
-            }), function (x) {
-                return x.value;
-            }));
-        });
+      }, function (err) {
+        callback(_map(results.sort(function (a, b) {
+          return a.index - b.index;
+        }), function (x) {
+          return x.value;
+        }));
+      });
     };
     async.reject = doParallel(_reject);
     async.rejectSeries = doSeries(_reject);
 
     var _detect = function (eachfn, arr, iterator, main_callback) {
-        eachfn(arr, function (x, callback) {
-            iterator(x, function (result) {
-                if (result) {
-                    main_callback(x);
-                    main_callback = function () {};
-                }
-                else {
-                    callback();
-                }
-            });
-        }, function (err) {
-            main_callback();
+      eachfn(arr, function (x, callback) {
+        iterator(x, function (result) {
+          if (result) {
+            main_callback(x);
+            main_callback = function () {};
+          }
+          else {
+            callback();
+          }
         });
+      }, function (err) {
+        main_callback();
+      });
     };
     async.detect = doParallel(_detect);
     async.detectSeries = doSeries(_detect);
 
     async.some = function (arr, iterator, main_callback) {
-        async.each(arr, function (x, callback) {
-            iterator(x, function (v) {
-                if (v) {
-                    main_callback(true);
-                    main_callback = function () {};
-                }
-                callback();
-            });
-        }, function (err) {
-            main_callback(false);
+      async.each(arr, function (x, callback) {
+        iterator(x, function (v) {
+          if (v) {
+            main_callback(true);
+            main_callback = function () {};
+          }
+          callback();
         });
+      }, function (err) {
+        main_callback(false);
+      });
     };
     // any alias
     async.any = async.some;
 
     async.every = function (arr, iterator, main_callback) {
-        async.each(arr, function (x, callback) {
-            iterator(x, function (v) {
-                if (!v) {
-                    main_callback(false);
-                    main_callback = function () {};
-                }
-                callback();
-            });
-        }, function (err) {
-            main_callback(true);
+      async.each(arr, function (x, callback) {
+        iterator(x, function (v) {
+          if (!v) {
+            main_callback(false);
+            main_callback = function () {};
+          }
+          callback();
         });
+      }, function (err) {
+        main_callback(true);
+      });
     };
     // all alias
     async.all = async.every;
 
     async.sortBy = function (arr, iterator, callback) {
-        async.map(arr, function (x, callback) {
-            iterator(x, function (err, criteria) {
-                if (err) {
-                    callback(err);
-                }
-                else {
-                    callback(null, {value: x, criteria: criteria});
-                }
-            });
-        }, function (err, results) {
-            if (err) {
-                return callback(err);
-            }
-            else {
-                var fn = function (left, right) {
-                    var a = left.criteria, b = right.criteria;
-                    return a < b ? -1 : a > b ? 1 : 0;
-                };
-                callback(null, _map(results.sort(fn), function (x) {
-                    return x.value;
-                }));
-            }
+      async.map(arr, function (x, callback) {
+        iterator(x, function (err, criteria) {
+          if (err) {
+            callback(err);
+          }
+          else {
+            callback(null, {value: x, criteria: criteria});
+          }
         });
+      }, function (err, results) {
+        if (err) {
+          return callback(err);
+        }
+        else {
+          var fn = function (left, right) {
+            var a = left.criteria, b = right.criteria;
+            return a < b ? -1 : a > b ? 1 : 0;
+          };
+          callback(null, _map(results.sort(fn), function (x) {
+            return x.value;
+          }));
+        }
+      });
     };
 
     async.auto = function (tasks, callback) {
-        callback = callback || function () {};
-        var keys = _keys(tasks);
-        if (!keys.length) {
-            return callback(null);
+      callback = callback || function () {};
+      var keys = _keys(tasks);
+      if (!keys.length) {
+        return callback(null);
+      }
+
+      var results = {};
+
+      var listeners = [];
+      var addListener = function (fn) {
+        listeners.unshift(fn);
+      };
+      var removeListener = function (fn) {
+        for (var i = 0; i < listeners.length; i += 1) {
+          if (listeners[i] === fn) {
+            listeners.splice(i, 1);
+            return;
+          }
         }
+      };
+      var taskComplete = function () {
+        _each(listeners.slice(0), function (fn) {
+          fn();
+        });
+      };
 
-        var results = {};
+      addListener(function () {
+        if (_keys(results).length === keys.length) {
+          callback(null, results);
+          callback = function () {};
+        }
+      });
 
-        var listeners = [];
-        var addListener = function (fn) {
-            listeners.unshift(fn);
-        };
-        var removeListener = function (fn) {
-            for (var i = 0; i < listeners.length; i += 1) {
-                if (listeners[i] === fn) {
-                    listeners.splice(i, 1);
-                    return;
-                }
-            }
-        };
-        var taskComplete = function () {
-            _each(listeners.slice(0), function (fn) {
-                fn();
+      _each(keys, function (k) {
+        var task = (tasks[k] instanceof Function) ? [tasks[k]]: tasks[k];
+        var taskCallback = function (err) {
+          var args = Array.prototype.slice.call(arguments, 1);
+          if (args.length <= 1) {
+            args = args[0];
+          }
+          if (err) {
+            var safeResults = {};
+            _each(_keys(results), function(rkey) {
+              safeResults[rkey] = results[rkey];
             });
+            safeResults[k] = args;
+            callback(err, safeResults);
+            // stop subsequent errors hitting callback multiple times
+            callback = function () {};
+          }
+          else {
+            results[k] = args;
+            async.setImmediate(taskComplete);
+          }
         };
-
-        addListener(function () {
-            if (_keys(results).length === keys.length) {
-                callback(null, results);
-                callback = function () {};
-            }
-        });
-
-        _each(keys, function (k) {
-            var task = (tasks[k] instanceof Function) ? [tasks[k]]: tasks[k];
-            var taskCallback = function (err) {
-                var args = Array.prototype.slice.call(arguments, 1);
-                if (args.length <= 1) {
-                    args = args[0];
-                }
-                if (err) {
-                    var safeResults = {};
-                    _each(_keys(results), function(rkey) {
-                        safeResults[rkey] = results[rkey];
-                    });
-                    safeResults[k] = args;
-                    callback(err, safeResults);
-                    // stop subsequent errors hitting callback multiple times
-                    callback = function () {};
-                }
-                else {
-                    results[k] = args;
-                    async.setImmediate(taskComplete);
-                }
-            };
-            var requires = task.slice(0, Math.abs(task.length - 1)) || [];
-            var ready = function () {
-                return _reduce(requires, function (a, x) {
-                    return (a && results.hasOwnProperty(x));
-                }, true) && !results.hasOwnProperty(k);
-            };
+        var requires = task.slice(0, Math.abs(task.length - 1)) || [];
+        var ready = function () {
+          return _reduce(requires, function (a, x) {
+            return (a && results.hasOwnProperty(x));
+          }, true) && !results.hasOwnProperty(k);
+        };
+        if (ready()) {
+          task[task.length - 1](taskCallback, results);
+        }
+        else {
+          var listener = function () {
             if (ready()) {
-                task[task.length - 1](taskCallback, results);
+              removeListener(listener);
+              task[task.length - 1](taskCallback, results);
             }
-            else {
-                var listener = function () {
-                    if (ready()) {
-                        removeListener(listener);
-                        task[task.length - 1](taskCallback, results);
-                    }
-                };
-                addListener(listener);
-            }
-        });
+          };
+          addListener(listener);
+        }
+      });
     };
 
     async.waterfall = function (tasks, callback) {
-        callback = callback || function () {};
-        if (tasks.constructor !== Array) {
-          var err = new Error('First argument to waterfall must be an array of functions');
-          return callback(err);
-        }
-        if (!tasks.length) {
-            return callback();
-        }
-        var wrapIterator = function (iterator) {
-            return function (err) {
-                if (err) {
-                    callback.apply(null, arguments);
-                    callback = function () {};
-                }
-                else {
-                    var args = Array.prototype.slice.call(arguments, 1);
-                    var next = iterator.next();
-                    if (next) {
-                        args.push(wrapIterator(next));
-                    }
-                    else {
-                        args.push(callback);
-                    }
-                    async.setImmediate(function () {
-                        iterator.apply(null, args);
-                    });
-                }
-            };
+      callback = callback || function () {};
+      if (tasks.constructor !== Array) {
+        var err = new Error('First argument to waterfall must be an array of functions');
+        return callback(err);
+      }
+      if (!tasks.length) {
+        return callback();
+      }
+      var wrapIterator = function (iterator) {
+        return function (err) {
+          if (err) {
+            callback.apply(null, arguments);
+            callback = function () {};
+          }
+          else {
+            var args = Array.prototype.slice.call(arguments, 1);
+            var next = iterator.next();
+            if (next) {
+              args.push(wrapIterator(next));
+            }
+            else {
+              args.push(callback);
+            }
+            async.setImmediate(function () {
+              iterator.apply(null, args);
+            });
+          }
         };
-        wrapIterator(async.iterator(tasks))();
+      };
+      wrapIterator(async.iterator(tasks))();
     };
 
     var _parallel = function(eachfn, tasks, callback) {
-        callback = callback || function () {};
-        if (tasks.constructor === Array) {
-            eachfn.map(tasks, function (fn, callback) {
-                if (fn) {
-                    fn(function (err) {
-                        var args = Array.prototype.slice.call(arguments, 1);
-                        if (args.length <= 1) {
-                            args = args[0];
-                        }
-                        callback.call(null, err, args);
-                    });
-                }
-            }, callback);
-        }
-        else {
-            var results = {};
-            eachfn.each(_keys(tasks), function (k, callback) {
-                tasks[k](function (err) {
-                    var args = Array.prototype.slice.call(arguments, 1);
-                    if (args.length <= 1) {
-                        args = args[0];
-                    }
-                    results[k] = args;
-                    callback(err);
-                });
-            }, function (err) {
-                callback(err, results);
+      callback = callback || function () {};
+      if (tasks.constructor === Array) {
+        eachfn.map(tasks, function (fn, callback) {
+          if (fn) {
+            fn(function (err) {
+              var args = Array.prototype.slice.call(arguments, 1);
+              if (args.length <= 1) {
+                args = args[0];
+              }
+              callback.call(null, err, args);
             });
-        }
+          }
+        }, callback);
+      }
+      else {
+        var results = {};
+        eachfn.each(_keys(tasks), function (k, callback) {
+          tasks[k](function (err) {
+            var args = Array.prototype.slice.call(arguments, 1);
+            if (args.length <= 1) {
+              args = args[0];
+            }
+            results[k] = args;
+            callback(err);
+          });
+        }, function (err) {
+          callback(err, results);
+        });
+      }
     };
 
     async.parallel = function (tasks, callback) {
-        _parallel({ map: async.map, each: async.each }, tasks, callback);
+      _parallel({ map: async.map, each: async.each }, tasks, callback);
     };
 
     async.parallelLimit = function(tasks, limit, callback) {
-        _parallel({ map: _mapLimit(limit), each: _eachLimit(limit) }, tasks, callback);
+      _parallel({ map: _mapLimit(limit), each: _eachLimit(limit) }, tasks, callback);
     };
 
     async.series = function (tasks, callback) {
-        callback = callback || function () {};
-        if (tasks.constructor === Array) {
-            async.mapSeries(tasks, function (fn, callback) {
-                if (fn) {
-                    fn(function (err) {
-                        var args = Array.prototype.slice.call(arguments, 1);
-                        if (args.length <= 1) {
-                            args = args[0];
-                        }
-                        callback.call(null, err, args);
-                    });
-                }
-            }, callback);
-        }
-        else {
-            var results = {};
-            async.eachSeries(_keys(tasks), function (k, callback) {
-                tasks[k](function (err) {
-                    var args = Array.prototype.slice.call(arguments, 1);
-                    if (args.length <= 1) {
-                        args = args[0];
-                    }
-                    results[k] = args;
-                    callback(err);
-                });
-            }, function (err) {
-                callback(err, results);
+      callback = callback || function () {};
+      if (tasks.constructor === Array) {
+        async.mapSeries(tasks, function (fn, callback) {
+          if (fn) {
+            fn(function (err) {
+              var args = Array.prototype.slice.call(arguments, 1);
+              if (args.length <= 1) {
+                args = args[0];
+              }
+              callback.call(null, err, args);
             });
-        }
+          }
+        }, callback);
+      }
+      else {
+        var results = {};
+        async.eachSeries(_keys(tasks), function (k, callback) {
+          tasks[k](function (err) {
+            var args = Array.prototype.slice.call(arguments, 1);
+            if (args.length <= 1) {
+              args = args[0];
+            }
+            results[k] = args;
+            callback(err);
+          });
+        }, function (err) {
+          callback(err, results);
+        });
+      }
     };
 
     async.iterator = function (tasks) {
-        var makeCallback = function (index) {
-            var fn = function () {
-                if (tasks.length) {
-                    tasks[index].apply(null, arguments);
-                }
-                return fn.next();
-            };
-            fn.next = function () {
-                return (index < tasks.length - 1) ? makeCallback(index + 1): null;
-            };
-            return fn;
+      var makeCallback = function (index) {
+        var fn = function () {
+          if (tasks.length) {
+            tasks[index].apply(null, arguments);
+          }
+          return fn.next();
         };
-        return makeCallback(0);
+        fn.next = function () {
+          return (index < tasks.length - 1) ? makeCallback(index + 1): null;
+        };
+        return fn;
+      };
+      return makeCallback(0);
     };
 
     async.apply = function (fn) {
-        var args = Array.prototype.slice.call(arguments, 1);
-        return function () {
-            return fn.apply(
-                null, args.concat(Array.prototype.slice.call(arguments))
-            );
-        };
+      var args = Array.prototype.slice.call(arguments, 1);
+      return function () {
+        return fn.apply(
+          null, args.concat(Array.prototype.slice.call(arguments))
+        );
+      };
     };
 
     var _concat = function (eachfn, arr, fn, callback) {
-        var r = [];
-        eachfn(arr, function (x, cb) {
-            fn(x, function (err, y) {
-                r = r.concat(y || []);
-                cb(err);
-            });
-        }, function (err) {
-            callback(err, r);
+      var r = [];
+      eachfn(arr, function (x, cb) {
+        fn(x, function (err, y) {
+          r = r.concat(y || []);
+          cb(err);
         });
+      }, function (err) {
+        callback(err, r);
+      });
     };
     async.concat = doParallel(_concat);
     async.concatSeries = doSeries(_concat);
 
     async.whilst = function (test, iterator, callback) {
-        if (test()) {
-            iterator(function (err) {
-                if (err) {
-                    return callback(err);
-                }
-                async.whilst(test, iterator, callback);
-            });
-        }
-        else {
-            callback();
-        }
+      if (test()) {
+        iterator(function (err) {
+          if (err) {
+            return callback(err);
+          }
+          async.whilst(test, iterator, callback);
+        });
+      }
+      else {
+        callback();
+      }
     };
 
     async.doWhilst = function (iterator, test, callback) {
-        iterator(function (err) {
-            if (err) {
-                return callback(err);
-            }
-            if (test()) {
-                async.doWhilst(iterator, test, callback);
-            }
-            else {
-                callback();
-            }
-        });
+      iterator(function (err) {
+        if (err) {
+          return callback(err);
+        }
+        if (test()) {
+          async.doWhilst(iterator, test, callback);
+        }
+        else {
+          callback();
+        }
+      });
     };
 
     async.until = function (test, iterator, callback) {
-        if (!test()) {
-            iterator(function (err) {
-                if (err) {
-                    return callback(err);
-                }
-                async.until(test, iterator, callback);
-            });
-        }
-        else {
-            callback();
-        }
+      if (!test()) {
+        iterator(function (err) {
+          if (err) {
+            return callback(err);
+          }
+          async.until(test, iterator, callback);
+        });
+      }
+      else {
+        callback();
+      }
     };
 
     async.doUntil = function (iterator, test, callback) {
-        iterator(function (err) {
-            if (err) {
-                return callback(err);
-            }
-            if (!test()) {
-                async.doUntil(iterator, test, callback);
-            }
-            else {
-                callback();
-            }
-        });
+      iterator(function (err) {
+        if (err) {
+          return callback(err);
+        }
+        if (!test()) {
+          async.doUntil(iterator, test, callback);
+        }
+        else {
+          callback();
+        }
+      });
     };
 
     async.queue = function (worker, concurrency) {
-        if (concurrency === undefined) {
-            concurrency = 1;
+      if (concurrency === undefined) {
+        concurrency = 1;
+      }
+      function _insert(q, data, pos, callback) {
+        if(data.constructor !== Array) {
+          data = [data];
         }
-        function _insert(q, data, pos, callback) {
-          if(data.constructor !== Array) {
-              data = [data];
+        _each(data, function(task) {
+          var item = {
+            data: task,
+            callback: typeof callback === 'function' ? callback : null
+          };
+
+          if (pos) {
+            q.tasks.unshift(item);
+          } else {
+            q.tasks.push(item);
           }
-          _each(data, function(task) {
-              var item = {
-                  data: task,
-                  callback: typeof callback === 'function' ? callback : null
-              };
 
-              if (pos) {
-                q.tasks.unshift(item);
-              } else {
-                q.tasks.push(item);
-              }
+          if (q.saturated && q.tasks.length === concurrency) {
+            q.saturated();
+          }
+          async.setImmediate(q.process);
+        });
+      }
 
-              if (q.saturated && q.tasks.length === concurrency) {
-                  q.saturated();
-              }
-              async.setImmediate(q.process);
-          });
-        }
-
-        var workers = 0;
-        var q = {
-            tasks: [],
-            concurrency: concurrency,
-            saturated: null,
-            empty: null,
-            drain: null,
-            push: function (data, callback) {
-              _insert(q, data, false, callback);
-            },
-            unshift: function (data, callback) {
-              _insert(q, data, true, callback);
-            },
-            process: function () {
-                if (workers < q.concurrency && q.tasks.length) {
-                    var task = q.tasks.shift();
-                    if (q.empty && q.tasks.length === 0) {
-                        q.empty();
-                    }
-                    workers += 1;
-                    var next = function () {
-                        workers -= 1;
-                        if (task.callback) {
-                            task.callback.apply(task, arguments);
-                        }
-                        if (q.drain && q.tasks.length + workers === 0) {
-                            q.drain();
-                        }
-                        q.process();
-                    };
-                    var cb = only_once(next);
-                    worker(task.data, cb);
-                }
-            },
-            length: function () {
-                return q.tasks.length;
-            },
-            running: function () {
-                return workers;
+      var workers = 0;
+      var q = {
+        tasks: [],
+        concurrency: concurrency,
+        saturated: null,
+        empty: null,
+        drain: null,
+        push: function (data, callback) {
+          _insert(q, data, false, callback);
+        },
+        unshift: function (data, callback) {
+          _insert(q, data, true, callback);
+        },
+        process: function () {
+          if (workers < q.concurrency && q.tasks.length) {
+            var task = q.tasks.shift();
+            if (q.empty && q.tasks.length === 0) {
+              q.empty();
             }
-        };
-        return q;
+            workers += 1;
+            var next = function () {
+              workers -= 1;
+              if (task.callback) {
+                task.callback.apply(task, arguments);
+              }
+              if (q.drain && q.tasks.length + workers === 0) {
+                q.drain();
+              }
+              q.process();
+            };
+            var cb = only_once(next);
+            worker(task.data, cb);
+          }
+        },
+        length: function () {
+          return q.tasks.length;
+        },
+        running: function () {
+          return workers;
+        }
+      };
+      return q;
     };
 
     async.cargo = function (worker, payload) {
-        var working     = false,
-            tasks       = [];
+      var working     = false,
+        tasks       = [];
 
-        var cargo = {
-            tasks: tasks,
-            payload: payload,
-            saturated: null,
-            empty: null,
-            drain: null,
-            push: function (data, callback) {
-                if(data.constructor !== Array) {
-                    data = [data];
-                }
-                _each(data, function(task) {
-                    tasks.push({
-                        data: task,
-                        callback: typeof callback === 'function' ? callback : null
-                    });
-                    if (cargo.saturated && tasks.length === payload) {
-                        cargo.saturated();
-                    }
-                });
-                async.setImmediate(cargo.process);
-            },
-            process: function process() {
-                if (working) return;
-                if (tasks.length === 0) {
-                    if(cargo.drain) cargo.drain();
-                    return;
-                }
-
-                var ts = typeof payload === 'number'
-                            ? tasks.splice(0, payload)
-                            : tasks.splice(0);
-
-                var ds = _map(ts, function (task) {
-                    return task.data;
-                });
-
-                if(cargo.empty) cargo.empty();
-                working = true;
-                worker(ds, function () {
-                    working = false;
-
-                    var args = arguments;
-                    _each(ts, function (data) {
-                        if (data.callback) {
-                            data.callback.apply(null, args);
-                        }
-                    });
-
-                    process();
-                });
-            },
-            length: function () {
-                return tasks.length;
-            },
-            running: function () {
-                return working;
+      var cargo = {
+        tasks: tasks,
+        payload: payload,
+        saturated: null,
+        empty: null,
+        drain: null,
+        push: function (data, callback) {
+          if(data.constructor !== Array) {
+            data = [data];
+          }
+          _each(data, function(task) {
+            tasks.push({
+              data: task,
+              callback: typeof callback === 'function' ? callback : null
+            });
+            if (cargo.saturated && tasks.length === payload) {
+              cargo.saturated();
             }
-        };
-        return cargo;
+          });
+          async.setImmediate(cargo.process);
+        },
+        process: function process() {
+          if (working) return;
+          if (tasks.length === 0) {
+            if(cargo.drain) cargo.drain();
+            return;
+          }
+
+          var ts = typeof payload === 'number'
+            ? tasks.splice(0, payload)
+            : tasks.splice(0);
+
+          var ds = _map(ts, function (task) {
+            return task.data;
+          });
+
+          if(cargo.empty) cargo.empty();
+          working = true;
+          worker(ds, function () {
+            working = false;
+
+            var args = arguments;
+            _each(ts, function (data) {
+              if (data.callback) {
+                data.callback.apply(null, args);
+              }
+            });
+
+            process();
+          });
+        },
+        length: function () {
+          return tasks.length;
+        },
+        running: function () {
+          return working;
+        }
+      };
+      return cargo;
     };
 
     var _console_fn = function (name) {
-        return function (fn) {
-            var args = Array.prototype.slice.call(arguments, 1);
-            fn.apply(null, args.concat([function (err) {
-                var args = Array.prototype.slice.call(arguments, 1);
-                if (typeof console !== 'undefined') {
-                    if (err) {
-                        if (console.error) {
-                            console.error(err);
-                        }
-                    }
-                    else if (console[name]) {
-                        _each(args, function (x) {
-                            console[name](x);
-                        });
-                    }
-                }
-            }]));
-        };
+      return function (fn) {
+        var args = Array.prototype.slice.call(arguments, 1);
+        fn.apply(null, args.concat([function (err) {
+          var args = Array.prototype.slice.call(arguments, 1);
+          if (typeof console !== 'undefined') {
+            if (err) {
+              if (console.error) {
+                console.error(err);
+              }
+            }
+            else if (console[name]) {
+              _each(args, function (x) {
+                console[name](x);
+              });
+            }
+          }
+        }]));
+      };
     };
     async.log = _console_fn('log');
     async.dir = _console_fn('dir');
     /*async.info = _console_fn('info');
-    async.warn = _console_fn('warn');
-    async.error = _console_fn('error');*/
+     async.warn = _console_fn('warn');
+     async.error = _console_fn('error');*/
 
     async.memoize = function (fn, hasher) {
-        var memo = {};
-        var queues = {};
-        hasher = hasher || function (x) {
-            return x;
-        };
-        var memoized = function () {
-            var args = Array.prototype.slice.call(arguments);
-            var callback = args.pop();
-            var key = hasher.apply(null, args);
-            if (key in memo) {
-                callback.apply(null, memo[key]);
+      var memo = {};
+      var queues = {};
+      hasher = hasher || function (x) {
+        return x;
+      };
+      var memoized = function () {
+        var args = Array.prototype.slice.call(arguments);
+        var callback = args.pop();
+        var key = hasher.apply(null, args);
+        if (key in memo) {
+          callback.apply(null, memo[key]);
+        }
+        else if (key in queues) {
+          queues[key].push(callback);
+        }
+        else {
+          queues[key] = [callback];
+          fn.apply(null, args.concat([function () {
+            memo[key] = arguments;
+            var q = queues[key];
+            delete queues[key];
+            for (var i = 0, l = q.length; i < l; i++) {
+              q[i].apply(null, arguments);
             }
-            else if (key in queues) {
-                queues[key].push(callback);
-            }
-            else {
-                queues[key] = [callback];
-                fn.apply(null, args.concat([function () {
-                    memo[key] = arguments;
-                    var q = queues[key];
-                    delete queues[key];
-                    for (var i = 0, l = q.length; i < l; i++) {
-                      q[i].apply(null, arguments);
-                    }
-                }]));
-            }
-        };
-        memoized.memo = memo;
-        memoized.unmemoized = fn;
-        return memoized;
+          }]));
+        }
+      };
+      memoized.memo = memo;
+      memoized.unmemoized = fn;
+      return memoized;
     };
 
     async.unmemoize = function (fn) {
@@ -22765,1611 +19963,145 @@ function rulesEngine (formDef) {
     };
 
     async.times = function (count, iterator, callback) {
-        var counter = [];
-        for (var i = 0; i < count; i++) {
-            counter.push(i);
-        }
-        return async.map(counter, iterator, callback);
+      var counter = [];
+      for (var i = 0; i < count; i++) {
+        counter.push(i);
+      }
+      return async.map(counter, iterator, callback);
     };
 
     async.timesSeries = function (count, iterator, callback) {
-        var counter = [];
-        for (var i = 0; i < count; i++) {
-            counter.push(i);
-        }
-        return async.mapSeries(counter, iterator, callback);
+      var counter = [];
+      for (var i = 0; i < count; i++) {
+        counter.push(i);
+      }
+      return async.mapSeries(counter, iterator, callback);
     };
 
     async.compose = function (/* functions... */) {
-        var fns = Array.prototype.reverse.call(arguments);
-        return function () {
-            var that = this;
-            var args = Array.prototype.slice.call(arguments);
-            var callback = args.pop();
-            async.reduce(fns, args, function (newargs, fn, cb) {
-                fn.apply(that, newargs.concat([function () {
-                    var err = arguments[0];
-                    var nextargs = Array.prototype.slice.call(arguments, 1);
-                    cb(err, nextargs);
-                }]))
-            },
-            function (err, results) {
-                callback.apply(that, [err].concat(results));
-            });
-        };
+      var fns = Array.prototype.reverse.call(arguments);
+      return function () {
+        var that = this;
+        var args = Array.prototype.slice.call(arguments);
+        var callback = args.pop();
+        async.reduce(fns, args, function (newargs, fn, cb) {
+            fn.apply(that, newargs.concat([function () {
+              var err = arguments[0];
+              var nextargs = Array.prototype.slice.call(arguments, 1);
+              cb(err, nextargs);
+            }]))
+          },
+          function (err, results) {
+            callback.apply(that, [err].concat(results));
+          });
+      };
     };
 
     var _applyEach = function (eachfn, fns /*args...*/) {
-        var go = function () {
-            var that = this;
-            var args = Array.prototype.slice.call(arguments);
-            var callback = args.pop();
-            return eachfn(fns, function (fn, cb) {
-                fn.apply(that, args.concat([cb]));
-            },
-            callback);
-        };
-        if (arguments.length > 2) {
-            var args = Array.prototype.slice.call(arguments, 2);
-            return go.apply(this, args);
-        }
-        else {
-            return go;
-        }
+      var go = function () {
+        var that = this;
+        var args = Array.prototype.slice.call(arguments);
+        var callback = args.pop();
+        return eachfn(fns, function (fn, cb) {
+            fn.apply(that, args.concat([cb]));
+          },
+          callback);
+      };
+      if (arguments.length > 2) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        return go.apply(this, args);
+      }
+      else {
+        return go;
+      }
     };
     async.applyEach = doParallel(_applyEach);
     async.applyEachSeries = doSeries(_applyEach);
 
     async.forever = function (fn, callback) {
-        function next(err) {
-            if (err) {
-                if (callback) {
-                    return callback(err);
-                }
-                throw err;
-            }
-            fn(next);
+      function next(err) {
+        if (err) {
+          if (callback) {
+            return callback(err);
+          }
+          throw err;
         }
-        next();
+        fn(next);
+      }
+      next();
     };
 
     // AMD / RequireJS
     if (typeof define !== 'undefined' && define.amd) {
-        define([], function () {
-            return async;
-        });
+      define([], function () {
+        return async;
+      });
     }
     // Node.js
     else if (typeof module !== 'undefined' && module.exports) {
-        module.exports = async;
+      module.exports = async;
     }
     // included directly via <script> tag
     else {
-        root.async = async;
+      root.async = async;
     }
 
-}());
+  }());
 
-/* This is the infix file */
-/* jshint ignore:end */
+  /* This is the infix file */
+  /* jshint ignore:end */
   var asyncLoader = module.exports;  // async has updated this, now save in our var, to that it can be returned from our dummy require
   function require() {
     return asyncLoader;
   }
 
-/* End of infix file */
+  /* End of infix file */
 
-(function () {
+  (function () {
 
-  var async = require('async');
-
-  /*
-   * Sample Usage
-   *
-   * var engine = formsRulesEngine(form-definition);
-   *
-   * engine.validateForms(form-submission, function(err, res) {});
-   *      res:
-   *      {
-   *          "validation": {
-   *              "fieldId": {
-   *                  "fieldId": "",
-   *                  "valid": true,
-   *                  "errorMessages": [
-   *                      "length should be 3 to 5",
-   *                      "should not contain dammit",
-   *                      "should repeat at least 2 times"
-   *                  ]
-   *              },
-   *              "fieldId1": {
-   *
-   *              }
-   *          }
-   *      }
-   *
-   *
-   * engine.validateField(fieldId, submissionJSON, function(err,res) {});
-   *      // validate only field values on validation (no rules, no repeat checking)
-   *      res:
-   *      "validation":{
-   *              "fieldId":{
-   *                  "fieldId":"",
-   *                  "valid":true,
-   *                  "errorMessages":[
-   *                      "length should be 3 to 5",
-   *                      "should not contain dammit"
-   *                  ]
-   *              }
-   *          }
-   *
-   * engine.checkRules(submissionJSON, unction(err, res) {})
-   *      // check all rules actions
-   *      res:
-   *      {
-   *          "actions": {
-   *              "pages": {
-   *                  "targetId": {
-   *                      "targetId": "",
-   *                      "action": "show|hide"
-   *                  }
-   *              },
-   *              "fields": {
-   *
-   *              }
-   *          }
-   *      }
-   *
-   */
-
-  var FIELD_TYPE_DATETIME_DATETIMEUNIT_DATEONLY = "date";
-  var FIELD_TYPE_DATETIME_DATETIMEUNIT_TIMEONLY = "time";
-  var FIELD_TYPE_DATETIME_DATETIMEUNIT_DATETIME = "datetime";
-
-  var formsRulesEngine = function (formDef) {
-    var initialised;
-
-    var definition = formDef;
-    var submission;
-
-    var fieldMap = {};
-    var adminFieldMap ={}; //Admin fields should not be part of a submission
-    var requiredFieldMap = {};
-    var submissionRequiredFieldsMap = {}; // map to hold the status of the required fields per submission
-    var fieldRulePredicateMap = {};
-    var fieldRuleSubjectMap = {};
-    var pageRulePredicateMap = {};
-    var pageRuleSubjectMap = {};
-    var submissionFieldsMap = {};
-    var validatorsMap = {
-      "text": validatorString,
-      "textarea": validatorString,
-      "number": validatorNumericString,
-      "emailAddress": validatorEmail,
-      "dropdown": validatorDropDown,
-      "radio": validatorDropDown,
-      "checkboxes": validatorCheckboxes,
-      "location": validatorLocation,
-      "locationMap": validatorLocationMap,
-      "photo": validatorFile,
-      "signature": validatorFile,
-      "file": validatorFile,
-      "dateTime": validatorDateTime,
-      "url": validatorString,
-      "sectionBreak": validatorSection,
-      "barcode": validatorBarcode,
-      "sliderNumber": validatorNumericString,
-      "readOnly": function(){
-        //readonly fields need no validation. Values are ignored.
-        return true;
-      }
-    };
-
-    var validatorsClientMap = {
-      "text": validatorString,
-      "textarea": validatorString,
-      "number": validatorNumericString,
-      "emailAddress": validatorEmail,
-      "dropdown": validatorDropDown,
-      "radio": validatorDropDown,
-      "checkboxes": validatorCheckboxes,
-      "location": validatorLocation,
-      "locationMap": validatorLocationMap,
-      "photo": validatorAnyFile,
-      "signature": validatorAnyFile,
-      "file": validatorAnyFile,
-      "dateTime": validatorDateTime,
-      "url": validatorString,
-      "sectionBreak": validatorSection,
-      "barcode": validatorBarcode,
-      "sliderNumber": validatorNumericString,
-      "readOnly": function(){
-        //readonly fields need no validation. Values are ignored.
-        return true;
-      }
-    };
-
-    var fieldValueComparison = {
-      "text": function(fieldValue, testValue, condition){
-        return this.comparisonString(fieldValue, testValue, condition);
-      },
-      "textarea": function(fieldValue, testValue, condition){
-        return this.comparisonString(fieldValue, testValue, condition);
-      },
-      "number": function(fieldValue, testValue, condition){
-        return this.numericalComparison(fieldValue, testValue, condition);
-      },
-      "emailAddress": function(fieldValue, testValue, condition){
-        return this.comparisonString(fieldValue, testValue, condition);
-      },
-      "dropdown": function(fieldValue, testValue, condition){
-        return this.comparisonString(fieldValue, testValue, condition);
-      },
-      "radio": function(fieldValue, testValue, condition){
-        return this.comparisonString(fieldValue, testValue, condition);
-      },
-      "checkboxes": function(fieldValue, testValue, condition){
-        fieldValue = fieldValue || {};
-        var valueFound = false;
-
-        if(!(fieldValue.selections instanceof Array)){
-          return false;
-        }
-
-        //Check if the testValue is contained in the selections
-        for(var selectionIndex = 0; selectionIndex < fieldValue.selections.length; selectionIndex++ ){
-          var selectionValue = fieldValue.selections[selectionIndex];
-          //Note, here we are using the "is" string comparator to check if the testValue matches the current selectionValue
-          if(this.comparisonString(selectionValue, testValue, "is")){
-            valueFound = true;
-          }
-        }
-
-        if(condition === "is"){
-          return valueFound;
-        } else {
-          return !valueFound;
-        }
-
-      },
-      "dateTime": function(fieldValue, testValue, condition, fieldOptions){
-        var valid = false;
-
-        fieldOptions = fieldOptions || {definition: {}};
-
-        //dateNumVal is assigned an easily comparible number depending on the type of units used.
-        var dateNumVal = null;
-        var testNumVal = null;
-
-        switch (fieldOptions.definition.datetimeUnit) {
-          case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATEONLY:
-            try {
-              dateNumVal = new Date(new Date(fieldValue).toDateString()).getTime();
-              testNumVal = new Date(new Date(testValue).toDateString()).getTime();
-              valid = true;
-            } catch (e) {
-              dateNumVal = null;
-              testNumVal = null;
-              valid = false;
-            }
-            break;
-          case FIELD_TYPE_DATETIME_DATETIMEUNIT_TIMEONLY:
-            var cvtTime = this.cvtTimeToSeconds(fieldValue);
-            var cvtTestVal = this.cvtTimeToSeconds(testValue);
-            dateNumVal = cvtTime.seconds;
-            testNumVal = cvtTestVal.seconds;
-            valid = cvtTime.valid && cvtTestVal.valid;
-            break;
-          case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATETIME:
-            try {
-              dateNumVal = (new Date(fieldValue).getTime());
-              testNumVal = (new Date(testValue).getTime());
-              valid = true;
-            } catch (e) {
-              valid = false;
-            }
-            break;
-          default:
-            valid = false;
-            break;
-        }
-
-        //The value is not valid, no point in comparing.
-        if(!valid){
-          return false;
-        }
-
-        if ("is at" === condition) {
-          valid = dateNumVal === testNumVal;
-        } else if ("is before" === condition) {
-          valid = dateNumVal < testNumVal;
-        } else if ("is after" === condition) {
-          valid = dateNumVal > testNumVal;
-        } else {
-          valid = false;
-        }
-
-        return valid;
-      },
-      "url": function(fieldValue, testValue, condition){
-        return this.comparisonString(fieldValue, testValue, condition);
-      },
-      "barcode": function(fieldValue, testValue, condition){
-        fieldValue = fieldValue || {};
-
-        if(typeof(fieldValue.text) !== "string"){
-          return false;
-        }
-
-        return this.comparisonString(fieldValue.text, testValue, condition);
-      },
-      "sliderNumber": function(fieldValue, testValue, condition){
-        return this.numericalComparison(fieldValue, testValue, condition);
-      },
-      "comparisonString": function(fieldValue, testValue, condition){
-        var valid = true;
-
-        if ("is" === condition) {
-          valid = fieldValue === testValue;
-        } else if ("is not" === condition) {
-          valid = fieldValue !== testValue;
-        } else if ("contains" === condition) {
-          valid = fieldValue.indexOf(testValue) !== -1;
-        } else if ("does not contain" === condition) {
-          valid = fieldValue.indexOf(testValue) === -1;
-        } else if ("begins with" === condition) {
-          valid = fieldValue.substring(0, testValue.length) === testValue;
-        } else if ("ends with" === condition) {
-          valid = fieldValue.substring(Math.max(0, (fieldValue.length - testValue.length)), fieldValue.length) === testValue;
-        } else {
-          valid = false;
-        }
-
-        return valid;
-      },
-      "numericalComparison": function(fieldValue, testValue, condition){
-        var fieldValNum = parseInt(fieldValue, 10);
-        var testValNum = parseInt(testValue, 10);
-
-        if(isNaN(fieldValNum) || isNaN(testValNum)){
-          return false;
-        }
-
-        if ("is equal to" === condition) {
-          return fieldValNum === testValNum;
-        } else if ("is less than" === condition) {
-          return fieldValNum < testValNum;
-        } else if ("is greater than" === condition) {
-          return fieldValNum > testValNum;
-        } else {
-          return false;
-        }
-      },
-      "cvtTimeToSeconds": function(fieldValue) {
-        var valid = false;
-        var seconds = 0;
-        if (typeof fieldValue === "string") {
-          var parts = fieldValue.split(':');
-          valid = (parts.length === 2) || (parts.length === 3);
-          if (valid) {
-            valid = isNumberBetween(parts[0], 0, 23);
-            seconds += (parseInt(parts[0], 10) * 60 * 60);
-          }
-          if (valid) {
-            valid = isNumberBetween(parts[1], 0, 59);
-            seconds += (parseInt(parts[1], 10) * 60);
-          }
-          if (valid && (parts.length === 3)) {
-            valid = isNumberBetween(parts[2], 0, 59);
-            seconds += parseInt(parts[2], 10);
-          }
-        }
-        return {valid: valid, seconds: seconds};
-      }
-    };
-
-
-
-    var isFieldRuleSubject = function (fieldId) {
-      return !!fieldRuleSubjectMap[fieldId];
-    };
-
-    var isPageRuleSubject = function (pageId) {
-      return !!pageRuleSubjectMap[pageId];
-    };
-
-    function buildFieldMap(cb) {
-      // Iterate over all fields in form definition & build fieldMap
-      async.each(definition.pages, function (page, cbPages) {
-        async.each(page.fields, function (field, cbFields) {
-          field.pageId = page._id;
-
-          /**
-           * If the field is an admin field, then it is not considered part of validation for a submission.
-           */
-          if(field.adminOnly){
-            adminFieldMap[field._id] = field;
-            return cbFields();
-          }
-
-          field.fieldOptions = field.fieldOptions ? field.fieldOptions : {};
-          field.fieldOptions.definition = field.fieldOptions.definition ? field.fieldOptions.definition : {};
-          field.fieldOptions.validation = field.fieldOptions.validation ? field.fieldOptions.validation : {};
-
-          fieldMap[field._id] = field;
-          if (field.required) {
-            requiredFieldMap[field._id] = {
-              field: field,
-              submitted: false,
-              validated: false
-            };
-          }
-          return cbFields();
-        }, function () {
-          return cbPages();
-        });
-      }, cb);
-    }
-
-    function buildFieldRuleMaps(cb) {
-      // Iterate over all rules in form definition & build ruleSubjectMap
-      async.each(definition.fieldRules, function (rule, cbRules) {
-        async.each(rule.ruleConditionalStatements, function (ruleConditionalStatement, cbRuleConditionalStatements) {
-          var fieldId = ruleConditionalStatement.sourceField;
-          fieldRulePredicateMap[fieldId] = fieldRulePredicateMap[fieldId] || [];
-          fieldRulePredicateMap[fieldId].push(rule);
-          return cbRuleConditionalStatements();
-        }, function () {
-
-          /**
-           * Target fields are an array of fieldIds that can be targeted by a field rule
-           * To maintain backwards compatibility, the case where the targetPage is not an array has to be considered
-           * @type {*|Array}
-           */
-          if(Array.isArray(rule.targetField)){
-            async.each(rule.targetField, function(targetField, cb){
-              fieldRuleSubjectMap[targetField] = fieldRuleSubjectMap[targetField] || [];
-              fieldRuleSubjectMap[targetField].push(rule);
-              cb();
-            }, cbRules);
-          } else {
-            fieldRuleSubjectMap[rule.targetField] = fieldRuleSubjectMap[rule.targetField] || [];
-            fieldRuleSubjectMap[rule.targetField].push(rule);
-            return cbRules();
-          }
-        });
-      }, cb);
-    }
-
-    function buildPageRuleMap(cb) {
-      // Iterate over all rules in form definition & build ruleSubjectMap
-      async.each(definition.pageRules, function (rule, cbRules) {
-        async.each(rule.ruleConditionalStatements, function (ruleConditionalStatement, cbRulePredicates) {
-          var fieldId = ruleConditionalStatement.sourceField;
-          pageRulePredicateMap[fieldId] = pageRulePredicateMap[fieldId] || [];
-          pageRulePredicateMap[fieldId].push(rule);
-          return cbRulePredicates();
-        }, function () {
-
-          /**
-           * Target pages are an array of pageIds that can be targeted by a page rule
-           * To maintain backwards compatibility, the case where the targetPage is not an array has to be considered
-           * @type {*|Array}
-           */
-          if(Array.isArray(rule.targetPage)){
-            async.each(rule.targetPage, function(targetPage, cb){
-              pageRuleSubjectMap[targetPage] = pageRuleSubjectMap[targetPage] || [];
-              pageRuleSubjectMap[targetPage].push(rule);
-              cb();
-            }, cbRules);
-          } else {
-            pageRuleSubjectMap[rule.targetPage] = pageRuleSubjectMap[rule.targetPage] || [];
-            pageRuleSubjectMap[rule.targetPage].push(rule);
-            return cbRules();
-          }
-        });
-      }, cb);
-    }
-
-    function buildSubmissionFieldsMap(cb) {
-      submissionRequiredFieldsMap = JSON.parse(JSON.stringify(requiredFieldMap)); // clone the map for use with this submission
-      submissionFieldsMap = {}; // start with empty map, rulesEngine can be called with multiple submissions
-
-      // iterate over all the fields in the submissions and build a map for easier lookup
-      async.each(submission.formFields, function (formField, cb) {
-        if (!formField.fieldId) return cb(new Error("No fieldId in this submission entry: " + JSON.stringify(formField)));
-
-        /**
-         * If the field passed in a submission is an admin field, then return an error.
-         */
-        if(adminFieldMap[formField.fieldId]){
-          return cb("Submission " + formField.fieldId + " is an admin field. Admin fields cannot be passed to the rules engine.");
-        }
-
-        submissionFieldsMap[formField.fieldId] = formField;
-        return cb();
-      }, cb);
-    }
-
-    function init(cb) {
-      if (initialised) return cb();
-      async.parallel([
-        buildFieldMap,
-        buildFieldRuleMaps,
-        buildPageRuleMap
-      ], function (err) {
-        if (err) return cb(err);
-        initialised = true;
-        return cb();
-      });
-    }
-
-    function initSubmission(formSubmission, cb) {
-      init(function (err) {
-        if (err) return cb(err);
-
-        submission = formSubmission;
-        buildSubmissionFieldsMap(cb);
-      });
-    }
-
-    function getPreviousFieldValues(submittedField, previousSubmission, cb) {
-      if (previousSubmission && previousSubmission.formFields) {
-        async.filter(previousSubmission.formFields, function (formField, cb) {
-          return cb(formField.fieldId.toString() === submittedField.fieldId.toString());
-        }, function (results) {
-          var previousFieldValues = null;
-          if (results && results[0] && results[0].fieldValues) {
-            previousFieldValues = results[0].fieldValues;
-          }
-          return cb(undefined, previousFieldValues);
-        });
-      } else {
-        return cb();
-      }
-    }
-
-    function validateForm(submission, previousSubmission, cb) {
-      if ("function" === typeof previousSubmission) {
-        cb = previousSubmission;
-        previousSubmission = null;
-      }
-      init(function (err) {
-        if (err) return cb(err);
-
-        initSubmission(submission, function (err) {
-          if (err) return cb(err);
-
-          async.waterfall([
-
-            function (cb) {
-              return cb(undefined, {
-                validation: {
-                  valid: true
-                }
-              }); // any invalid fields will set this to false
-            },
-            function (res, cb) {
-              validateSubmittedFields(res, previousSubmission, cb);
-            },
-            checkIfRequiredFieldsNotSubmitted
-          ], function (err, results) {
-            if (err) return cb(err);
-
-            return cb(undefined, results);
-          });
-        });
-      });
-    }
-
-    function validateSubmittedFields(res, previousSubmission, cb) {
-      // for each field, call validateField
-      async.each(submission.formFields, function (submittedField, callback) {
-        var fieldID = submittedField.fieldId;
-        var fieldDef = fieldMap[fieldID];
-
-        getPreviousFieldValues(submittedField, previousSubmission, function (err, previousFieldValues) {
-          if (err) return callback(err);
-          getFieldValidationStatus(submittedField, fieldDef, previousFieldValues, function (err, fieldRes) {
-            if (err) return callback(err);
-
-            if (!fieldRes.valid) {
-              res.validation.valid = false; // indicate invalid form if any fields invalid
-              res.validation[fieldID] = fieldRes; // add invalid field info to validate form result
-            }
-
-            return callback();
-          });
-
-        });
-      }, function (err) {
-        if (err) {
-          return cb(err);
-        }
-        return cb(undefined, res);
-      });
-    }
-
-    function checkIfRequiredFieldsNotSubmitted(res, cb) {
-      async.each(Object.keys(submissionRequiredFieldsMap), function (requiredFieldId, cb) {
-        var resField = {};
-        if (!submissionRequiredFieldsMap[requiredFieldId].submitted) {
-          isFieldVisible(requiredFieldId, true, function (err, visible) {
-            if (err) return cb(err);
-            if (visible) { // we only care about required fields if they are visible
-              resField.fieldId = requiredFieldId;
-              resField.valid = false;
-              resField.fieldErrorMessage = ["Required Field Not Submitted"];
-              res.validation[requiredFieldId] = resField;
-              res.validation.valid = false;
-            }
-            return cb();
-          });
-        } else { // was included in submission
-          return cb();
-        }
-      }, function (err) {
-        if (err) return cb(err);
-
-        return cb(undefined, res);
-      });
-    }
+    var async = require('async');
 
     /*
-     * validate only field values on validation (no rules, no repeat checking)
-     *     res:
-     *     "validation":{
-     *             "fieldId":{
-     *                 "fieldId":"",
-     *                 "valid":true,
-     *                 "errorMessages":[
-     *                     "length should be 3 to 5",
-     *                     "should not contain dammit"
-     *                 ]
-     *             }
-     *         }
-     */
-    function validateField(fieldId, submission, cb) {
-      init(function (err) {
-        if (err) return cb(err);
-
-        initSubmission(submission, function (err) {
-          if (err) return cb(err);
-
-          var submissionField = submissionFieldsMap[fieldId];
-          var fieldDef = fieldMap[fieldId];
-          getFieldValidationStatus(submissionField, fieldDef, null, function (err, res) {
-            if (err) return cb(err);
-            var ret = {
-              validation: {}
-            };
-            ret.validation[fieldId] = res;
-            return cb(undefined, ret);
-          });
-        });
-      });
-    }
-
-    /*
-     * validate only single field value (no rules, no repeat checking)
-     * cb(err, result)
-     * example of result:
-     * "validation":{
-     *         "fieldId":{
-     *             "fieldId":"",
-     *             "valid":true,
-     *             "errorMessages":[
-     *                 "length should be 3 to 5",
-     *                 "should not contain dammit"
-     *             ]
-     *         }
-     *     }
-     */
-    function validateFieldValue(fieldId, inputValue, valueIndex, cb) {
-      if ("function" === typeof valueIndex) {
-        cb = valueIndex;
-        valueIndex = 0;
-      }
-
-      init(function (err) {
-        if (err) return cb(err);
-        var fieldDefinition = fieldMap[fieldId];
-
-        var required = false;
-        if (fieldDefinition.repeating &&
-          fieldDefinition.fieldOptions &&
-          fieldDefinition.fieldOptions.definition &&
-          fieldDefinition.fieldOptions.definition.minRepeat) {
-          required = (valueIndex < fieldDefinition.fieldOptions.definition.minRepeat);
-        } else {
-          required = fieldDefinition.required;
-        }
-
-        var validation = (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) ? fieldDefinition.fieldOptions.validation : undefined;
-
-        if (validation && false === validation.validateImmediately) {
-          var ret = {
-            validation: {}
-          };
-          ret.validation[fieldId] = {
-            "valid": true
-          };
-          return cb(undefined, ret);
-        }
-
-        if (fieldEmpty(inputValue)) {
-          if (required) {
-            return formatResponse("No value specified for required input", cb);
-          } else {
-            return formatResponse(undefined, cb); // optional field not supplied is valid
-          }
-        }
-
-        // not empty need to validate
-        getClientValidatorFunction(fieldDefinition.type, function (err, validator) {
-          if (err) return cb(err);
-
-          validator(inputValue, fieldDefinition, undefined, function (err) {
-            var message;
-            if (err) {
-              if (err.message) {
-                message = err.message;
-              } else {
-                message = "Unknown error message";
-              }
-            }
-            formatResponse(message, cb);
-          });
-        });
-      });
-
-      function formatResponse(msg, cb) {
-        var messages = {
-          errorMessages: []
-        };
-        if (msg) {
-          messages.errorMessages.push(msg);
-        }
-        return createValidatorResponse(fieldId, messages, function (err, res) {
-          if (err) return cb(err);
-          var ret = {
-            validation: {}
-          };
-          ret.validation[fieldId] = res;
-          return cb(undefined, ret);
-        });
-      }
-    }
-
-    function createValidatorResponse(fieldId, messages, cb) {
-      // intentionally not checking err here, used further down to get validation errors
-      var res = {};
-      res.fieldId = fieldId;
-      res.errorMessages = messages.errorMessages || [];
-      res.fieldErrorMessage = messages.fieldErrorMessage || [];
-      async.some(res.errorMessages, function (item, cb) {
-        return cb(item !== null);
-      }, function (someErrors) {
-        res.valid = !someErrors && (res.fieldErrorMessage.length < 1);
-
-        return cb(undefined, res);
-      });
-    }
-
-    function getFieldValidationStatus(submittedField, fieldDef, previousFieldValues, cb) {
-      isFieldVisible(fieldDef._id, true, function(err, visible){
-        if(err){
-          return cb(err);
-        }
-        validateFieldInternal(submittedField, fieldDef, previousFieldValues, visible, function (err, messages) {
-          if (err) return cb(err);
-          createValidatorResponse(submittedField.fieldId, messages, cb);
-        });
-      });
-    }
-
-    function getMapFunction(key, map, cb) {
-      var validator = map[key];
-      if (!validator) {
-        return cb(new Error("Invalid Field Type " + key));
-      }
-
-      return cb(undefined, validator);
-    }
-
-    function getValidatorFunction(fieldType, cb) {
-      return getMapFunction(fieldType, validatorsMap, cb);
-    }
-
-    function getClientValidatorFunction(fieldType, cb) {
-      return getMapFunction(fieldType, validatorsClientMap, cb);
-    }
-
-    function fieldEmpty(fieldValue) {
-      return ('undefined' === typeof fieldValue || null === fieldValue || "" === fieldValue); // empty string also regarded as not specified
-    }
-
-    function validateFieldInternal(submittedField, fieldDef, previousFieldValues, visible, cb) {
-      previousFieldValues = previousFieldValues || null;
-      countSubmittedValues(submittedField, function (err, numSubmittedValues) {
-        if (err) return cb(err);
-        //Marking the visibility of the field on the definition.
-        fieldDef.visible = visible;
-        async.series({
-          valuesSubmitted: async.apply(checkValueSubmitted, submittedField, fieldDef, visible),
-          repeats: async.apply(checkRepeat, numSubmittedValues, fieldDef, visible),
-          values: async.apply(checkValues, submittedField, fieldDef, previousFieldValues)
-        }, function (err, results) {
-          if (err) return cb(err);
-
-          var fieldErrorMessages = [];
-          if (results.valuesSubmitted) {
-            fieldErrorMessages.push(results.valuesSubmitted);
-          }
-          if (results.repeats) {
-            fieldErrorMessages.push(results.repeats);
-          }
-          return cb(undefined, {
-            fieldErrorMessage: fieldErrorMessages,
-            errorMessages: results.values
-          });
-        });
-      });
-
-      return; // just functions below this
-
-      function checkValueSubmitted(submittedField, fieldDefinition, visible, cb) {
-        if (!fieldDefinition.required) return cb(undefined, null);
-
-        var valueSubmitted = submittedField && submittedField.fieldValues && (submittedField.fieldValues.length > 0);
-        //No value submitted is only an error if the field is visible.
-        if (!valueSubmitted && visible) {
-          return cb(undefined, "No value submitted for field " + fieldDefinition.name);
-        }
-        return cb(undefined, null);
-
-      }
-
-      function countSubmittedValues(submittedField, cb) {
-        var numSubmittedValues = 0;
-        if (submittedField && submittedField.fieldValues && submittedField.fieldValues.length > 0) {
-          for (var i = 0; i < submittedField.fieldValues.length; i += 1) {
-            if (submittedField.fieldValues[i]) {
-              numSubmittedValues += 1;
-            }
-          }
-        }
-        return cb(undefined, numSubmittedValues);
-      }
-
-      function checkRepeat(numSubmittedValues, fieldDefinition, visible, cb) {
-        //If the field is not visible, then checking the repeating values of the field is not required
-        if(!visible){
-          return cb(undefined, null);
-        }
-
-        if (fieldDefinition.repeating && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.definition) {
-          if (fieldDefinition.fieldOptions.definition.minRepeat) {
-            if (numSubmittedValues < fieldDefinition.fieldOptions.definition.minRepeat) {
-              return cb(undefined, "Expected min of " + fieldDefinition.fieldOptions.definition.minRepeat + " values for field " + fieldDefinition.name + " but got " + numSubmittedValues);
-            }
-          }
-
-          if (fieldDefinition.fieldOptions.definition.maxRepeat) {
-            if (numSubmittedValues > fieldDefinition.fieldOptions.definition.maxRepeat) {
-              return cb(undefined, "Expected max of " + fieldDefinition.fieldOptions.definition.maxRepeat + " values for field " + fieldDefinition.name + " but got " + numSubmittedValues);
-            }
-          }
-        } else {
-          if (numSubmittedValues > 1) {
-            return cb(undefined, "Should not have multiple values for non-repeating field");
-          }
-        }
-
-        return cb(undefined, null);
-      }
-
-      function checkValues(submittedField, fieldDefinition, previousFieldValues, cb) {
-        getValidatorFunction(fieldDefinition.type, function (err, validator) {
-          if (err) return cb(err);
-          async.map(submittedField.fieldValues, function (fieldValue, cb) {
-            if (fieldEmpty(fieldValue)) {
-              return cb(undefined, null);
-            } else {
-              validator(fieldValue, fieldDefinition, previousFieldValues, function (validationError) {
-                var errorMessage;
-                if (validationError) {
-                  errorMessage = validationError.message || "Error during validation of field";
-                } else {
-                  errorMessage = null;
-                }
-
-                if (submissionRequiredFieldsMap[fieldDefinition._id]) { // set to true if at least one value
-                  submissionRequiredFieldsMap[fieldDefinition._id].submitted = true;
-                }
-
-                return cb(undefined, errorMessage);
-              });
-            }
-          }, function (err, results) {
-            if (err) return cb(err);
-
-            return cb(undefined, results);
-          });
-        });
-      }
-    }
-
-    function convertSimpleFormatToRegex(field_format_string) {
-      var regex = "^";
-      var C = "c".charCodeAt(0);
-      var N = "n".charCodeAt(0);
-
-      var i;
-      var ch;
-      var match;
-      var len = field_format_string.length;
-      for (i = 0; i < len; i += 1) {
-        ch = field_format_string.charCodeAt(i);
-        switch (ch) {
-          case C:
-            match = "[a-zA-Z0-9]";
-            break;
-          case N:
-            match = "[0-9]";
-            break;
-          default:
-            var num = ch.toString(16).toUpperCase();
-            match = "\\u" + ("0000" + num).substr(-4);
-            break;
-        }
-        regex += match;
-      }
-      return regex + "$";
-    }
-
-    function validFormatRegex(fieldValue, field_format_string) {
-      var pattern = new RegExp(field_format_string);
-      return pattern.test(fieldValue);
-    }
-
-    function validFormat(fieldValue, field_format_mode, field_format_string) {
-      var regex;
-      if ("simple" === field_format_mode) {
-        regex = convertSimpleFormatToRegex(field_format_string);
-      } else if ("regex" === field_format_mode) {
-        regex = field_format_string;
-      } else { // should never be anything else, but if it is then default to simple format
-        regex = convertSimpleFormatToRegex(field_format_string);
-      }
-
-      return validFormatRegex(fieldValue, regex);
-    }
-
-    function validatorString(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (typeof fieldValue !== "string") {
-        return cb(new Error("Expected string but got " + typeof(fieldValue)));
-      }
-
-      var validation = {};
-      if (fieldDefinition && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) {
-        validation = fieldDefinition.fieldOptions.validation;
-      }
-
-      var field_format_mode = validation.field_format_mode || "";
-      field_format_mode = field_format_mode.trim();
-      var field_format_string = validation.field_format_string || "";
-      field_format_string = field_format_string.trim();
-
-      if (field_format_string && (field_format_string.length > 0) && field_format_mode && (field_format_mode.length > 0)) {
-        if (!validFormat(fieldValue, field_format_mode, field_format_string)) {
-          return cb(new Error("field value in incorrect format, expected format: " + field_format_string + " but submission value is: " + fieldValue));
-        }
-      }
-
-      if (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation && fieldDefinition.fieldOptions.validation.min) {
-        if (fieldValue.length < fieldDefinition.fieldOptions.validation.min) {
-          return cb(new Error("Expected minimum string length of " + fieldDefinition.fieldOptions.validation.min + " but submission is " + fieldValue.length + ". Submitted val: " + fieldValue));
-        }
-      }
-
-      if (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation && fieldDefinition.fieldOptions.validation.max) {
-        if (fieldValue.length > fieldDefinition.fieldOptions.validation.max) {
-          return cb(new Error("Expected maximum string length of " + fieldDefinition.fieldOptions.validation.max + " but submission is " + fieldValue.length + ". Submitted val: " + fieldValue));
-        }
-      }
-
-      return cb();
-    }
-
-    function validatorNumericString(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      var testVal = (fieldValue - 0); // coerce to number (or NaN)
-      /*jshint eqeqeq:false */
-      var numeric = (testVal == fieldValue); // testVal co-erced to numeric above, so numeric comparison and NaN != NaN
-
-      if (!numeric) {
-        return cb(new Error("Expected numeric but got: " + fieldValue));
-      }
-
-      return validatorNumber(testVal, fieldDefinition, previousFieldValues, cb);
-    }
-
-    function validatorNumber(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (typeof fieldValue !== "number") {
-        return cb(new Error("Expected number but got " + typeof(fieldValue)));
-      }
-
-      if (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation && fieldDefinition.fieldOptions.validation.min) {
-        if (fieldValue < fieldDefinition.fieldOptions.validation.min) {
-          return cb(new Error("Expected minimum Number " + fieldDefinition.fieldOptions.validation.min + " but submission is " + fieldValue + ". Submitted number: " + fieldValue));
-        }
-      }
-
-      if (fieldDefinition.fieldOptions.validation.max) {
-        if (fieldValue > fieldDefinition.fieldOptions.validation.max) {
-          return cb(new Error("Expected maximum Number " + fieldDefinition.fieldOptions.validation.max + " but submission is " + fieldValue + ". Submitted number: " + fieldValue));
-        }
-      }
-
-      return cb();
-    }
-
-    function validatorEmail(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (typeof(fieldValue) !== "string") {
-        return cb(new Error("Expected string but got " + typeof(fieldValue)));
-      }
-
-      if (fieldValue.match(/[-0-9a-zA-Z.+_]+@[-0-9a-zA-Z.+_]+\.[a-zA-Z]{2,4}/g) === null) {
-        return cb(new Error("Invalid email address format: " + fieldValue));
-      } else {
-        return cb();
-      }
-    }
-
-    function validatorDropDown(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (typeof(fieldValue) !== "string") {
-        return cb(new Error("Expected submission to be string but got " + typeof(fieldValue)));
-      }
-
-      //Check value exists in the field definition
-      if (!fieldDefinition.fieldOptions.definition.options) {
-        return cb(new Error("No options exist for field " + fieldDefinition.name));
-      }
-
-      async.some(fieldDefinition.fieldOptions.definition.options, function (dropdownOption, cb) {
-        return cb(dropdownOption.label === fieldValue);
-      }, function (found) {
-        if (!found) {
-          return cb(new Error("Invalid option specified: " + fieldValue));
-        } else {
-          return cb();
-        }
-      });
-    }
-
-    function validatorCheckboxes(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      var minVal;
-
-      if (fieldDefinition && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) {
-        minVal = fieldDefinition.fieldOptions.validation.min;
-      }
-      var maxVal;
-      if (fieldDefinition && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) {
-        maxVal = fieldDefinition.fieldOptions.validation.max;
-      }
-
-      if (minVal) {
-        if (fieldValue.selections === null || fieldValue.selections === undefined || fieldValue.selections.length < minVal && fieldDefinition.visible) {
-          var len;
-          if (fieldValue.selections) {
-            len = fieldValue.selections.length;
-          }
-          return cb(new Error("Expected a minimum number of selections " + minVal + " but got " + len));
-        }
-      }
-
-      if (maxVal) {
-        if (fieldValue.selections) {
-          if (fieldValue.selections.length > maxVal) {
-            return cb(new Error("Expected a maximum number of selections " + maxVal + " but got " + fieldValue.selections.length));
-          }
-        }
-      }
-
-      var optionsInCheckbox = [];
-
-      async.eachSeries(fieldDefinition.fieldOptions.definition.options, function (choice, cb) {
-        for (var choiceName in choice) {
-          optionsInCheckbox.push(choice[choiceName]);
-        }
-        return cb();
-      }, function () {
-        async.eachSeries(fieldValue.selections, function (selection, cb) {
-          if (typeof(selection) !== "string") {
-            return cb(new Error("Expected checkbox submission to be string but got " + typeof(selection)));
-          }
-
-          if (optionsInCheckbox.indexOf(selection) === -1) {
-            return cb(new Error("Checkbox Option " + selection + " does not exist in the field."));
-          }
-
-          return cb();
-        }, cb);
-      });
-    }
-
-    function validatorLocationMap(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (fieldValue.lat && fieldValue["long"]) {
-        if (isNaN(parseFloat(fieldValue.lat)) || isNaN(parseFloat(fieldValue["long"]))) {
-          return cb(new Error("Invalid latitude and longitude values"));
-        } else {
-          return cb();
-        }
-      } else {
-        return cb(new Error("Invalid object for locationMap submission"));
-      }
-    }
-
-
-    function validatorLocation(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (fieldDefinition.fieldOptions.definition.locationUnit === "latlong") {
-        if (fieldValue.lat && fieldValue["long"]) {
-          if (isNaN(parseFloat(fieldValue.lat)) || isNaN(parseFloat(fieldValue["long"]))) {
-            return cb(new Error("Invalid latitude and longitude values"));
-          } else {
-            return cb();
-          }
-        } else {
-          return cb(new Error("Invalid object for latitude longitude submission"));
-        }
-      } else {
-        if (fieldValue.zone && fieldValue.eastings && fieldValue.northings) {
-          //Zone must be 3 characters, eastings 6 and northings 9
-          return validateNorthingsEastings(fieldValue, cb);
-        } else {
-          return cb(new Error("Invalid object for northings easting submission. Zone, Eastings and Northings elemets are required"));
-        }
-      }
-
-      function validateNorthingsEastings(fieldValue, cb) {
-        if (typeof(fieldValue.zone) !== "string" || fieldValue.zone.length === 0) {
-          return cb(new Error("Invalid zone definition for northings and eastings location. " + fieldValue.zone));
-        }
-
-        var east = parseInt(fieldValue.eastings, 10);
-        if (isNaN(east)) {
-          return cb(new Error("Invalid eastings definition for northings and eastings location. " + fieldValue.eastings));
-        }
-
-        var north = parseInt(fieldValue.northings, 10);
-        if (isNaN(north)) {
-          return cb(new Error("Invalid northings definition for northings and eastings location. " + fieldValue.northings));
-        }
-
-        return cb();
-      }
-    }
-
-    function validatorAnyFile(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      // if any of the following validators return ok, then return ok.
-      validatorBase64(fieldValue, fieldDefinition, previousFieldValues, function (err) {
-        if (!err) {
-          return cb();
-        }
-        validatorFile(fieldValue, fieldDefinition, previousFieldValues, function (err) {
-          if (!err) {
-            return cb();
-          }
-          validatorFileObj(fieldValue, fieldDefinition, previousFieldValues, function (err) {
-            if (!err) {
-              return cb();
-            }
-            return cb(err);
-          });
-        });
-      });
-    }
-
-    /**
-     * Function to validate a barcode submission
+     * Sample Usage
      *
-     * Must be an object with the following contents
+     * var engine = formsRulesEngine(form-definition);
      *
-     * {
-     *   text: "<<content of barcode>>",
-     *   format: "<<barcode content format>>"
-     * }
+     * engine.validateForms(form-submission, function(err, res) {});
+     *      res:
+     *      {
+     *          "validation": {
+     *              "fieldId": {
+     *                  "fieldId": "",
+     *                  "valid": true,
+     *                  "errorMessages": [
+     *                      "length should be 3 to 5",
+     *                      "should not contain dammit",
+     *                      "should repeat at least 2 times"
+     *                  ]
+     *              },
+     *              "fieldId1": {
      *
-     * @param fieldValue
-     * @param fieldDefinition
-     * @param previousFieldValues
-     * @param cb
-     */
-    function validatorBarcode(fieldValue, fieldDefinition, previousFieldValues, cb){
-      if(typeof(fieldValue) !== "object" || fieldValue === null){
-        return cb(new Error("Expected object but got " + typeof(fieldValue)));
-      }
-
-      if(typeof(fieldValue.text) !== "string" || fieldValue.text.length === 0){
-        return cb(new Error("Expected text parameter."));
-      }
-
-      if(typeof(fieldValue.format) !== "string" || fieldValue.format.length === 0){
-        return cb(new Error("Expected format parameter."));
-      }
-
-      return cb();
-    }
-
-    function checkFileSize(fieldDefinition, fieldValue, sizeKey, cb) {
-      fieldDefinition = fieldDefinition || {};
-      var fieldOptions = fieldDefinition.fieldOptions || {};
-      var fieldOptionsDef = fieldOptions.definition || {};
-      var fileSizeMax = fieldOptionsDef.file_size || null; //FileSizeMax will be in KB. File size is in bytes
-
-      if (fileSizeMax !== null) {
-        var fieldValueSize = fieldValue[sizeKey];
-        var fieldValueSizeKB = 1;
-        if (fieldValueSize > 1000) {
-          fieldValueSizeKB = fieldValueSize / 1000;
-        }
-        if (fieldValueSize > (fileSizeMax * 1000)) {
-          return cb(new Error("File size is too large. File can be a maximum of " + fileSizeMax + "KB. Size of file selected: " + fieldValueSizeKB + "KB"));
-        } else {
-          return cb();
-        }
-      } else {
-        return cb();
-      }
-    }
-
-    function validatorFile(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (typeof fieldValue !== "object") {
-        return cb(new Error("Expected object but got " + typeof(fieldValue)));
-      }
-
-      var keyTypes = [
-        {
-          keyName: "fileName",
-          valueType: "string"
-        },
-        {
-          keyName: "fileSize",
-          valueType: "number"
-        },
-        {
-          keyName: "fileType",
-          valueType: "string"
-        },
-        {
-          keyName: "fileUpdateTime",
-          valueType: "number"
-        },
-        {
-          keyName: "hashName",
-          valueType: "string"
-        }
-      ];
-
-      async.each(keyTypes, function (keyType, cb) {
-        var actualType = typeof fieldValue[keyType.keyName];
-        if (actualType !== keyType.valueType) {
-          return cb(new Error("Expected " + keyType.valueType + " but got " + actualType));
-        }
-        if (keyType.keyName === "fileName" && fieldValue[keyType.keyName].length <= 0) {
-          return cb(new Error("Expected value for " + keyType.keyName));
-        }
-
-        return cb();
-      }, function (err) {
-        if (err) return cb(err);
-
-        checkFileSize(fieldDefinition, fieldValue, "fileSize", function (err) {
-          if (err) {
-            return cb(err);
-          }
-
-          if (fieldValue.hashName.indexOf("filePlaceHolder") > -1) { //TODO abstract out to config
-            return cb();
-          } else if (previousFieldValues && previousFieldValues.hashName && previousFieldValues.hashName.indexOf(fieldValue.hashName) > -1) {
-            return cb();
-          } else {
-            return cb(new Error("Invalid file placeholder text" + fieldValue.hashName));
-          }
-        });
-      });
-    }
-
-    function validatorFileObj(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if ((typeof File !== "function")) {
-        return cb(new Error("Expected File object but got " + typeof(fieldValue)));
-      }
-
-      var keyTypes = [
-        {
-          keyName: "name",
-          valueType: "string"
-        },
-        {
-          keyName: "size",
-          valueType: "number"
-        }
-      ];
-
-      async.each(keyTypes, function (keyType, cb) {
-        var actualType = typeof fieldValue[keyType.keyName];
-        if (actualType !== keyType.valueType) {
-          return cb(new Error("Expected " + keyType.valueType + " but got " + actualType));
-        }
-        if (actualType === "string" && fieldValue[keyType.keyName].length <= 0) {
-          return cb(new Error("Expected value for " + keyType.keyName));
-        }
-        if (actualType === "number" && fieldValue[keyType.keyName] <= 0) {
-          return cb(new Error("Expected > 0 value for " + keyType.keyName));
-        }
-
-        return cb();
-      }, function (err) {
-        if (err) return cb(err);
-
-
-        checkFileSize(fieldDefinition, fieldValue, "size", function (err) {
-          if (err) {
-            return cb(err);
-          }
-          return cb();
-        });
-      });
-    }
-
-    function validatorBase64(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      if (typeof fieldValue !== "string") {
-        return cb(new Error("Expected base64 string but got " + typeof(fieldValue)));
-      }
-
-      if (fieldValue.length <= 0) {
-        return cb(new Error("Expected base64 string but was empty"));
-      }
-
-      return cb();
-    }
-
-    function validatorDateTime(fieldValue, fieldDefinition, previousFieldValues, cb) {
-      var testDate;
-      var valid = false;
-      var parts = [];
-
-      if (typeof(fieldValue) !== "string") {
-        return cb(new Error("Expected string but got " + typeof(fieldValue)));
-      }
-
-      switch (fieldDefinition.fieldOptions.definition.datetimeUnit) {
-        case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATEONLY:
-
-          parts = fieldValue.split("/");
-          valid = parts.length === 3;
-
-          if(valid){
-            valid = isNumberBetween(parts[2], 1, 31);
-          }
-
-          if(valid){
-            valid = isNumberBetween(parts[1], 1, 12);
-          }
-
-          if(valid){
-            valid = isNumberBetween(parts[0], 1000, 9999);
-          }
-
-          try {
-            if(valid){
-              testDate = new Date(parts[3], parts[1], parts[0]);
-            } else {
-              testDate = new Date(fieldValue);
-            }
-            valid = (testDate.toString() !== "Invalid Date");
-          } catch (e) {
-            valid = false;
-          }
-
-          if (valid) {
-            return cb();
-          } else {
-            return cb(new Error("Invalid date value " + fieldValue + ". Date format is YYYY/MM/DD"));
-          }
-          break;
-        case FIELD_TYPE_DATETIME_DATETIMEUNIT_TIMEONLY:
-          parts = fieldValue.split(':');
-          valid = (parts.length === 2) || (parts.length === 3);
-          if (valid) {
-            valid = isNumberBetween(parts[0], 0, 23);
-          }
-          if (valid) {
-            valid = isNumberBetween(parts[1], 0, 59);
-          }
-          if (valid && (parts.length === 3)) {
-            valid = isNumberBetween(parts[2], 0, 59);
-          }
-          if (valid) {
-            return cb();
-          } else {
-            return cb(new Error("Invalid time value " + fieldValue + ". Time format is HH:MM:SS"));
-          }
-          break;
-        case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATETIME:
-          parts = fieldValue.split(/[- :]/);
-
-          valid = (parts.length === 6) || (parts.length === 5);
-
-          if(valid){
-            valid = isNumberBetween(parts[2], 1, 31);
-          }
-
-          if(valid){
-            valid = isNumberBetween(parts[1], 1, 12);
-          }
-
-          if(valid){
-            valid = isNumberBetween(parts[0], 1000, 9999);
-          }
-
-          if (valid) {
-            valid = isNumberBetween(parts[3], 0, 23);
-          }
-          if (valid) {
-            valid = isNumberBetween(parts[4], 0, 59);
-          }
-          if (valid && parts.length === 6) {
-            valid = isNumberBetween(parts[5], 0, 59);
-          } else {
-            parts[5] = 0;
-          }
-
-          try {
-            if(valid){
-              testDate = new Date(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]);
-            } else {
-              testDate = new Date(fieldValue);
-            }
-
-            valid = (testDate.toString() !== "Invalid Date");
-          } catch (e) {
-            valid = false;
-          }
-
-          if(valid){
-            return cb();
-          } else {
-            return cb(new Error("Invalid dateTime string " + fieldValue + ". dateTime format is YYYY/MM/DD HH:MM:SS"));
-          }
-          break;
-        default:
-          return cb(new Error("Invalid dateTime fieldtype " + fieldDefinition.fieldOptions.definition.datetimeUnit));
-      }
-    }
-
-    function validatorSection(value, fieldDefinition, previousFieldValues, cb) {
-      return cb(new Error("Should not submit section field: " + fieldDefinition.name));
-    }
-
-    function rulesResult(rules, cb) {
-      var visible = true;
-
-      // Itterate over each rule that this field is a predicate of
-      async.each(rules, function (rule, cbRule) {
-        // For each rule, itterate over the predicate fields and evaluate the rule
-        var predicateMapQueries = [];
-        var predicateMapPassed = [];
-        async.each(rule.ruleConditionalStatements, function (ruleConditionalStatement, cbPredicates) {
-          var field = fieldMap[ruleConditionalStatement.sourceField];
-          var passed = false;
-          var submissionValues = [];
-          var condition;
-          var testValue;
-          if (submissionFieldsMap[ruleConditionalStatement.sourceField] && submissionFieldsMap[ruleConditionalStatement.sourceField].fieldValues) {
-            submissionValues = submissionFieldsMap[ruleConditionalStatement.sourceField].fieldValues;
-            condition = ruleConditionalStatement.restriction;
-            testValue = ruleConditionalStatement.sourceValue;
-
-            // Validate rule predictes on the first entry only.
-            passed = isConditionActive(field, submissionValues[0], testValue, condition);
-          }
-          predicateMapQueries.push({
-            "field": field,
-            "submissionValues": submissionValues,
-            "condition": condition,
-            "testValue": testValue,
-            "passed": passed
-          });
-
-          if (passed) {
-            predicateMapPassed.push(field);
-          }
-          return cbPredicates();
-        }, function (err) {
-          if (err) cbRule(err);
-
-          function rulesPassed(condition, passed, queries) {
-            return ((condition === "and") && ((passed.length === queries.length))) || // "and" condition - all rules must pass
-              ((condition === "or") && ((passed.length > 0))); // "or" condition - only one rule must pass
-          }
-
-          /**
-           * If any rule condition that targets the field/page hides that field/page, then the page is hidden.
-           * Hiding the field/page takes precedence over any show. This will maintain consistency.
-           * E.g. if x is y then show p1,p2 takes precendence over if x is z then hide p1, p2
-           */
-          if (rulesPassed(rule.ruleConditionalOperator, predicateMapPassed, predicateMapQueries)) {
-            visible = (rule.type === "show") && visible;
-          } else {
-            visible = (rule.type !== "show") && visible;
-          }
-
-          return cbRule();
-        });
-      }, function (err) {
-        if (err) return cb(err);
-
-        return cb(undefined, visible);
-      });
-    }
-
-    function isPageVisible(pageId, cb) {
-      init(function (err) {
-        if (err) return cb(err);
-        if (isPageRuleSubject(pageId)) { // if the page is the target of a rule
-          return rulesResult(pageRuleSubjectMap[pageId], cb); // execute page rules
-        } else {
-          return cb(undefined, true); // if page is not subject of any rule then must be visible
-        }
-      });
-    }
-
-    function isFieldVisible(fieldId, checkContainingPage, cb) {
-      /*
-       * fieldId = Id of field to check for reule predeciate references
-       * checkContainingPage = if true check page containing field, and return false if the page is hidden
-       */
-      init(function (err) {
-        if (err) return cb(err);
-
-        // Fields are visable by default
-        var field = fieldMap[fieldId];
-
-        /**
-         * If the field is an admin field, the rules engine returns an error, as admin fields cannot be the subject of rules engine actions.
-         */
-        if(adminFieldMap[fieldId]){
-          return cb(new Error("Submission " + fieldId + " is an admin field. Admin fields cannot be passed to the rules engine."));
-        } else if(!field){
-          return cb(new Error("Field does not exist in form"));
-        }
-
-        async.waterfall([
-
-          function testPage(cb) {
-            if (checkContainingPage) {
-              isPageVisible(field.pageId, cb);
-            } else {
-              return cb(undefined, true);
-            }
-          },
-          function testField(pageVisible, cb) {
-            if (!pageVisible) { // if page containing field is not visible then don't need to check field
-              return cb(undefined, false);
-            }
-
-            if (isFieldRuleSubject(fieldId)) { // If the field is the subject of a rule it may have been hidden
-              return rulesResult(fieldRuleSubjectMap[fieldId], cb); // execute field rules
-            } else {
-              return cb(undefined, true); // if not subject of field rules then can't be hidden
-            }
-          }
-        ], cb);
-      });
-    }
-
-    /*
-     * check all rules actions
+     *              }
+     *          }
+     *      }
+     *
+     *
+     * engine.validateField(fieldId, submissionJSON, function(err,res) {});
+     *      // validate only field values on validation (no rules, no repeat checking)
+     *      res:
+     *      "validation":{
+     *              "fieldId":{
+     *                  "fieldId":"",
+     *                  "valid":true,
+     *                  "errorMessages":[
+     *                      "length should be 3 to 5",
+     *                      "should not contain dammit"
+     *                  ]
+     *              }
+     *          }
+     *
+     * engine.checkRules(submissionJSON, unction(err, res) {})
+     *      // check all rules actions
      *      res:
      *      {
      *          "actions": {
@@ -24380,105 +20112,1558 @@ function rulesEngine (formDef) {
      *                  }
      *              },
      *              "fields": {
+     *
      *              }
      *          }
      *      }
+     *
      */
-    function checkRules(submissionJSON, cb) {
-      init(function (err) {
-        if (err) return cb(err);
 
-        initSubmission(submissionJSON, function (err) {
-          if (err) return cb(err);
-          var actions = {};
+    var FIELD_TYPE_DATETIME_DATETIMEUNIT_DATEONLY = "date";
+    var FIELD_TYPE_DATETIME_DATETIMEUNIT_TIMEONLY = "time";
+    var FIELD_TYPE_DATETIME_DATETIMEUNIT_DATETIME = "datetime";
 
-          async.parallel([
+    var formsRulesEngine = function (formDef) {
+      var initialised;
 
-            function (cb) {
-              actions.fields = {};
-              async.eachSeries(Object.keys(fieldRuleSubjectMap), function (fieldId, cb) {
-                isFieldVisible(fieldId, false, function (err, fieldVisible) {
-                  if (err) return cb(err);
-                  actions.fields[fieldId] = {
-                    targetId: fieldId,
-                    action: (fieldVisible ? "show" : "hide")
-                  };
-                  return cb();
-                });
-              }, cb);
-            },
-            function (cb) {
-              actions.pages = {};
-              async.eachSeries(Object.keys(pageRuleSubjectMap), function (pageId, cb) {
-                isPageVisible(pageId, function (err, pageVisible) {
-                  if (err) return cb(err);
-                  actions.pages[pageId] = {
-                    targetId: pageId,
-                    action: (pageVisible ? "show" : "hide")
-                  };
-                  return cb();
-                });
-              }, cb);
+      var definition = formDef;
+      var submission;
+
+      var fieldMap = {};
+      var adminFieldMap ={}; //Admin fields should not be part of a submission
+      var requiredFieldMap = {};
+      var submissionRequiredFieldsMap = {}; // map to hold the status of the required fields per submission
+      var fieldRulePredicateMap = {};
+      var fieldRuleSubjectMap = {};
+      var pageRulePredicateMap = {};
+      var pageRuleSubjectMap = {};
+      var submissionFieldsMap = {};
+      var validatorsMap = {
+        "text": validatorString,
+        "textarea": validatorString,
+        "number": validatorNumericString,
+        "emailAddress": validatorEmail,
+        "dropdown": validatorDropDown,
+        "radio": validatorDropDown,
+        "checkboxes": validatorCheckboxes,
+        "location": validatorLocation,
+        "locationMap": validatorLocationMap,
+        "photo": validatorFile,
+        "signature": validatorFile,
+        "file": validatorFile,
+        "dateTime": validatorDateTime,
+        "url": validatorString,
+        "sectionBreak": validatorSection,
+        "barcode": validatorBarcode,
+        "sliderNumber": validatorNumericString
+      };
+
+      var validatorsClientMap = {
+        "text": validatorString,
+        "textarea": validatorString,
+        "number": validatorNumericString,
+        "emailAddress": validatorEmail,
+        "dropdown": validatorDropDown,
+        "radio": validatorDropDown,
+        "checkboxes": validatorCheckboxes,
+        "location": validatorLocation,
+        "locationMap": validatorLocationMap,
+        "photo": validatorAnyFile,
+        "signature": validatorAnyFile,
+        "file": validatorAnyFile,
+        "dateTime": validatorDateTime,
+        "url": validatorString,
+        "sectionBreak": validatorSection,
+        "barcode": validatorBarcode,
+        "sliderNumber": validatorNumericString
+      };
+
+      var fieldValueComparison = {
+        "text": function(fieldValue, testValue, condition){
+          return this.comparisonString(fieldValue, testValue, condition);
+        },
+        "textarea": function(fieldValue, testValue, condition){
+          return this.comparisonString(fieldValue, testValue, condition);
+        },
+        "number": function(fieldValue, testValue, condition){
+          return this.numericalComparison(fieldValue, testValue, condition);
+        },
+        "emailAddress": function(fieldValue, testValue, condition){
+          return this.comparisonString(fieldValue, testValue, condition);
+        },
+        "dropdown": function(fieldValue, testValue, condition){
+          return this.comparisonString(fieldValue, testValue, condition);
+        },
+        "radio": function(fieldValue, testValue, condition){
+          return this.comparisonString(fieldValue, testValue, condition);
+        },
+        "checkboxes": function(fieldValue, testValue, condition){
+          fieldValue = fieldValue || {};
+          var valueFound = false;
+
+          if(!(fieldValue.selections instanceof Array)){
+            return false;
+          }
+
+          //Check if the testValue is contained in the selections
+          for(var selectionIndex = 0; selectionIndex < fieldValue.selections.length; selectionIndex++ ){
+            var selectionValue = fieldValue.selections[selectionIndex];
+            //Note, here we are using the "is" string comparator to check if the testValue matches the current selectionValue
+            if(this.comparisonString(selectionValue, testValue, "is")){
+              valueFound = true;
             }
-          ], function (err) {
+          }
+
+          if(condition === "is"){
+            return valueFound;
+          } else {
+            return !valueFound;
+          }
+
+        },
+        "dateTime": function(fieldValue, testValue, condition, fieldOptions){
+          var valid = false;
+
+          fieldOptions = fieldOptions || {definition: {}};
+
+          //dateNumVal is assigned an easily comparible number depending on the type of units used.
+          var dateNumVal = null;
+          var testNumVal = null;
+
+          switch (fieldOptions.definition.datetimeUnit) {
+            case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATEONLY:
+              try {
+                dateNumVal = new Date(new Date(fieldValue).toDateString()).getTime();
+                testNumVal = new Date(new Date(testValue).toDateString()).getTime();
+                valid = true;
+              } catch (e) {
+                dateNumVal = null;
+                testNumVal = null;
+                valid = false;
+              }
+              break;
+            case FIELD_TYPE_DATETIME_DATETIMEUNIT_TIMEONLY:
+              var cvtTime = this.cvtTimeToSeconds(fieldValue);
+              var cvtTestVal = this.cvtTimeToSeconds(testValue);
+              dateNumVal = cvtTime.seconds;
+              testNumVal = cvtTestVal.seconds;
+              valid = cvtTime.valid && cvtTestVal.valid;
+              break;
+            case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATETIME:
+              try {
+                dateNumVal = (new Date(fieldValue).getTime());
+                testNumVal = (new Date(testValue).getTime());
+                valid = true;
+              } catch (e) {
+                valid = false;
+              }
+              break;
+            default:
+              valid = false;
+              break;
+          }
+
+          //The value is not valid, no point in comparing.
+          if(!valid){
+            return false;
+          }
+
+          if ("is at" === condition) {
+            valid = dateNumVal === testNumVal;
+          } else if ("is before" === condition) {
+            valid = dateNumVal < testNumVal;
+          } else if ("is after" === condition) {
+            valid = dateNumVal > testNumVal;
+          } else {
+            valid = false;
+          }
+
+          return valid;
+        },
+        "url": function(fieldValue, testValue, condition){
+          return this.comparisonString(fieldValue, testValue, condition);
+        },
+        "barcode": function(fieldValue, testValue, condition){
+          fieldValue = fieldValue || {};
+
+          if(typeof(fieldValue.text) !== "string"){
+            return false;
+          }
+
+          return this.comparisonString(fieldValue.text, testValue, condition);
+        },
+        "sliderNumber": function(fieldValue, testValue, condition){
+          return this.numericalComparison(fieldValue, testValue, condition);
+        },
+        "comparisonString": function(fieldValue, testValue, condition){
+          var valid = true;
+
+          if ("is" === condition) {
+            valid = fieldValue === testValue;
+          } else if ("is not" === condition) {
+            valid = fieldValue !== testValue;
+          } else if ("contains" === condition) {
+            valid = fieldValue.indexOf(testValue) !== -1;
+          } else if ("does not contain" === condition) {
+            valid = fieldValue.indexOf(testValue) === -1;
+          } else if ("begins with" === condition) {
+            valid = fieldValue.substring(0, testValue.length) === testValue;
+          } else if ("ends with" === condition) {
+            valid = fieldValue.substring(Math.max(0, (fieldValue.length - testValue.length)), fieldValue.length) === testValue;
+          } else {
+            valid = false;
+          }
+
+          return valid;
+        },
+        "numericalComparison": function(fieldValue, testValue, condition){
+          var fieldValNum = parseInt(fieldValue, 10);
+          var testValNum = parseInt(testValue, 10);
+
+          if(isNaN(fieldValNum) || isNaN(testValNum)){
+            return false;
+          }
+
+          if ("is equal to" === condition) {
+            return fieldValNum === testValNum;
+          } else if ("is less than" === condition) {
+            return fieldValNum < testValNum;
+          } else if ("is greater than" === condition) {
+            return fieldValNum > testValNum;
+          } else {
+            return false;
+          }
+        },
+        "cvtTimeToSeconds": function(fieldValue) {
+          var valid = false;
+          var seconds = 0;
+          if (typeof fieldValue === "string") {
+            var parts = fieldValue.split(':');
+            valid = (parts.length === 2) || (parts.length === 3);
+            if (valid) {
+              valid = isNumberBetween(parts[0], 0, 23);
+              seconds += (parseInt(parts[0], 10) * 60 * 60);
+            }
+            if (valid) {
+              valid = isNumberBetween(parts[1], 0, 59);
+              seconds += (parseInt(parts[1], 10) * 60);
+            }
+            if (valid && (parts.length === 3)) {
+              valid = isNumberBetween(parts[2], 0, 59);
+              seconds += parseInt(parts[2], 10);
+            }
+          }
+          return {valid: valid, seconds: seconds};
+        }
+      };
+
+
+
+      var isFieldRuleSubject = function (fieldId) {
+        return !!fieldRuleSubjectMap[fieldId];
+      };
+
+      var isPageRuleSubject = function (pageId) {
+        return !!pageRuleSubjectMap[pageId];
+      };
+
+      function buildFieldMap(cb) {
+        // Iterate over all fields in form definition & build fieldMap
+        async.each(definition.pages, function (page, cbPages) {
+          async.each(page.fields, function (field, cbFields) {
+            field.pageId = page._id;
+
+            /**
+             * If the field is an admin field, then it is not considered part of validation for a submission.
+             */
+            if(field.adminOnly){
+              adminFieldMap[field._id] = field;
+              return cbFields();
+            }
+
+            field.fieldOptions = field.fieldOptions ? field.fieldOptions : {};
+            field.fieldOptions.definition = field.fieldOptions.definition ? field.fieldOptions.definition : {};
+            field.fieldOptions.validation = field.fieldOptions.validation ? field.fieldOptions.validation : {};
+
+            fieldMap[field._id] = field;
+            if (field.required) {
+              requiredFieldMap[field._id] = {
+                field: field,
+                submitted: false,
+                validated: false
+              };
+            }
+            return cbFields();
+          }, function () {
+            return cbPages();
+          });
+        }, cb);
+      }
+
+      function buildFieldRuleMaps(cb) {
+        // Iterate over all rules in form definition & build ruleSubjectMap
+        async.each(definition.fieldRules, function (rule, cbRules) {
+          async.each(rule.ruleConditionalStatements, function (ruleConditionalStatement, cbRuleConditionalStatements) {
+            var fieldId = ruleConditionalStatement.sourceField;
+            fieldRulePredicateMap[fieldId] = fieldRulePredicateMap[fieldId] || [];
+            fieldRulePredicateMap[fieldId].push(rule);
+            return cbRuleConditionalStatements();
+          }, function () {
+
+            /**
+             * Target fields are an array of fieldIds that can be targeted by a field rule
+             * To maintain backwards compatibility, the case where the targetPage is not an array has to be considered
+             * @type {*|Array}
+             */
+            if(Array.isArray(rule.targetField)){
+              async.each(rule.targetField, function(targetField, cb){
+                fieldRuleSubjectMap[targetField] = fieldRuleSubjectMap[targetField] || [];
+                fieldRuleSubjectMap[targetField].push(rule);
+                cb();
+              }, cbRules);
+            } else {
+              fieldRuleSubjectMap[rule.targetField] = fieldRuleSubjectMap[rule.targetField] || [];
+              fieldRuleSubjectMap[rule.targetField].push(rule);
+              return cbRules();
+            }
+          });
+        }, cb);
+      }
+
+      function buildPageRuleMap(cb) {
+        // Iterate over all rules in form definition & build ruleSubjectMap
+        async.each(definition.pageRules, function (rule, cbRules) {
+          async.each(rule.ruleConditionalStatements, function (ruleConditionalStatement, cbRulePredicates) {
+            var fieldId = ruleConditionalStatement.sourceField;
+            pageRulePredicateMap[fieldId] = pageRulePredicateMap[fieldId] || [];
+            pageRulePredicateMap[fieldId].push(rule);
+            return cbRulePredicates();
+          }, function () {
+
+            /**
+             * Target pages are an array of pageIds that can be targeted by a page rule
+             * To maintain backwards compatibility, the case where the targetPage is not an array has to be considered
+             * @type {*|Array}
+             */
+            if(Array.isArray(rule.targetPage)){
+              async.each(rule.targetPage, function(targetPage, cb){
+                pageRuleSubjectMap[targetPage] = pageRuleSubjectMap[targetPage] || [];
+                pageRuleSubjectMap[targetPage].push(rule);
+                cb();
+              }, cbRules);
+            } else {
+              pageRuleSubjectMap[rule.targetPage] = pageRuleSubjectMap[rule.targetPage] || [];
+              pageRuleSubjectMap[rule.targetPage].push(rule);
+              return cbRules();
+            }
+          });
+        }, cb);
+      }
+
+      function buildSubmissionFieldsMap(cb) {
+        submissionRequiredFieldsMap = JSON.parse(JSON.stringify(requiredFieldMap)); // clone the map for use with this submission
+        submissionFieldsMap = {}; // start with empty map, rulesEngine can be called with multiple submissions
+
+        // iterate over all the fields in the submissions and build a map for easier lookup
+        async.each(submission.formFields, function (formField, cb) {
+          if (!formField.fieldId) return cb(new Error("No fieldId in this submission entry: " + util.inspect(formField)));
+
+          /**
+           * If the field passed in a submission is an admin field, then return an error.
+           */
+          if(adminFieldMap[formField.fieldId]){
+            return cb("Submission " + formField.fieldId + " is an admin field. Admin fields cannot be passed to the rules engine.");
+          }
+
+          submissionFieldsMap[formField.fieldId] = formField;
+          return cb();
+        }, cb);
+      }
+
+      function init(cb) {
+        if (initialised) return cb();
+        async.parallel([
+          buildFieldMap,
+          buildFieldRuleMaps,
+          buildPageRuleMap
+        ], function (err) {
+          if (err) return cb(err);
+          initialised = true;
+          return cb();
+        });
+      }
+
+      function initSubmission(formSubmission, cb) {
+        init(function (err) {
+          if (err) return cb(err);
+
+          submission = formSubmission;
+          buildSubmissionFieldsMap(cb);
+        });
+      }
+
+      function getPreviousFieldValues(submittedField, previousSubmission, cb) {
+        if (previousSubmission && previousSubmission.formFields) {
+          async.filter(previousSubmission.formFields, function (formField, cb) {
+            return cb(formField.fieldId.toString() === submittedField.fieldId.toString());
+          }, function (results) {
+            var previousFieldValues = null;
+            if (results && results[0] && results[0].fieldValues) {
+              previousFieldValues = results[0].fieldValues;
+            }
+            return cb(undefined, previousFieldValues);
+          });
+        } else {
+          return cb();
+        }
+      }
+
+      function validateForm(submission, previousSubmission, cb) {
+        if ("function" === typeof previousSubmission) {
+          cb = previousSubmission;
+          previousSubmission = null;
+        }
+        init(function (err) {
+          if (err) return cb(err);
+
+          initSubmission(submission, function (err) {
             if (err) return cb(err);
 
-            return cb(undefined, {
-              actions: actions
+            async.waterfall([
+
+              function (cb) {
+                return cb(undefined, {
+                  validation: {
+                    valid: true
+                  }
+                }); // any invalid fields will set this to false
+              },
+              function (res, cb) {
+                validateSubmittedFields(res, previousSubmission, cb);
+              },
+              checkIfRequiredFieldsNotSubmitted
+            ], function (err, results) {
+              if (err) return cb(err);
+
+              return cb(undefined, results);
             });
           });
         });
-      });
-    }
-
-    function isConditionActive(field, fieldValue, testValue, condition) {
-
-      var fieldType = field.type;
-      var fieldOptions = field.fieldOptions ? field.fieldOptions : {};
-
-      if(typeof(fieldValue) === 'undefined' || fieldValue === null){
-        return false;
       }
 
-      if(typeof(fieldValueComparison[fieldType]) === "function"){
-        return fieldValueComparison[fieldType](fieldValue, testValue, condition, fieldOptions);
-      } else {
-        return false;
+      function validateSubmittedFields(res, previousSubmission, cb) {
+        // for each field, call validateField
+        async.each(submission.formFields, function (submittedField, callback) {
+          var fieldID = submittedField.fieldId;
+          var fieldDef = fieldMap[fieldID];
+
+          getPreviousFieldValues(submittedField, previousSubmission, function (err, previousFieldValues) {
+            if (err) return callback(err);
+            getFieldValidationStatus(submittedField, fieldDef, previousFieldValues, function (err, fieldRes) {
+              if (err) return callback(err);
+
+              if (!fieldRes.valid) {
+                res.validation.valid = false; // indicate invalid form if any fields invalid
+                res.validation[fieldID] = fieldRes; // add invalid field info to validate form result
+              }
+
+              return callback();
+            });
+
+          });
+        }, function (err) {
+          if (err) {
+            return cb(err);
+          }
+          return cb(undefined, res);
+        });
       }
 
-    }
+      function checkIfRequiredFieldsNotSubmitted(res, cb) {
+        async.each(Object.keys(submissionRequiredFieldsMap), function (requiredFieldId, cb) {
+          var resField = {};
+          if (!submissionRequiredFieldsMap[requiredFieldId].submitted) {
+            isFieldVisible(requiredFieldId, true, function (err, visible) {
+              if (err) return cb(err);
+              if (visible) { // we only care about required fields if they are visible
+                resField.fieldId = requiredFieldId;
+                resField.valid = false;
+                resField.fieldErrorMessage = ["Required Field Not Submitted"];
+                res.validation[requiredFieldId] = resField;
+                res.validation.valid = false;
+              }
+              return cb();
+            });
+          } else { // was included in submission
+            return cb();
+          }
+        }, function (err) {
+          if (err) return cb(err);
 
-    function isNumberBetween(num, min, max) {
-      var numVal = parseInt(num, 10);
-      return (!isNaN(numVal) && (numVal >= min) && (numVal <= max));
-    }
+          return cb(undefined, res);
+        });
+      }
 
-    return {
-      validateForm: validateForm,
-      validateField: validateField,
-      validateFieldValue: validateFieldValue,
-      checkRules: checkRules,
+      /*
+       * validate only field values on validation (no rules, no repeat checking)
+       *     res:
+       *     "validation":{
+       *             "fieldId":{
+       *                 "fieldId":"",
+       *                 "valid":true,
+       *                 "errorMessages":[
+       *                     "length should be 3 to 5",
+       *                     "should not contain dammit"
+       *                 ]
+       *             }
+       *         }
+       */
+      function validateField(fieldId, submission, cb) {
+        init(function (err) {
+          if (err) return cb(err);
 
-      // The following are used internally, but exposed for tests
-      validateFieldInternal: validateFieldInternal,
-      initSubmission: initSubmission,
-      isFieldVisible: isFieldVisible,
-      isConditionActive: isConditionActive
+          initSubmission(submission, function (err) {
+            if (err) return cb(err);
+
+            var submissionField = submissionFieldsMap[fieldId];
+            var fieldDef = fieldMap[fieldId];
+            getFieldValidationStatus(submissionField, fieldDef, null, function (err, res) {
+              if (err) return cb(err);
+              var ret = {
+                validation: {}
+              };
+              ret.validation[fieldId] = res;
+              return cb(undefined, ret);
+            });
+          });
+        });
+      }
+
+      /*
+       * validate only single field value (no rules, no repeat checking)
+       * cb(err, result)
+       * example of result:
+       * "validation":{
+       *         "fieldId":{
+       *             "fieldId":"",
+       *             "valid":true,
+       *             "errorMessages":[
+       *                 "length should be 3 to 5",
+       *                 "should not contain dammit"
+       *             ]
+       *         }
+       *     }
+       */
+      function validateFieldValue(fieldId, inputValue, valueIndex, cb) {
+        if ("function" === typeof valueIndex) {
+          cb = valueIndex;
+          valueIndex = 0;
+        }
+
+        init(function (err) {
+          if (err) return cb(err);
+          var fieldDefinition = fieldMap[fieldId];
+
+          var required = false;
+          if (fieldDefinition.repeating &&
+            fieldDefinition.fieldOptions &&
+            fieldDefinition.fieldOptions.definition &&
+            fieldDefinition.fieldOptions.definition.minRepeat) {
+            required = (valueIndex < fieldDefinition.fieldOptions.definition.minRepeat);
+          } else {
+            required = fieldDefinition.required;
+          }
+
+          var validation = (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) ? fieldDefinition.fieldOptions.validation : undefined;
+
+          if (validation && false === validation.validateImmediately) {
+            var ret = {
+              validation: {}
+            };
+            ret.validation[fieldId] = {
+              "valid": true
+            };
+            return cb(undefined, ret);
+          }
+
+          if (fieldEmpty(inputValue)) {
+            if (required) {
+              return formatResponse("No value specified for required input", cb);
+            } else {
+              return formatResponse(undefined, cb); // optional field not supplied is valid
+            }
+          }
+
+          // not empty need to validate
+          getClientValidatorFunction(fieldDefinition.type, function (err, validator) {
+            if (err) return cb(err);
+
+            validator(inputValue, fieldDefinition, undefined, function (err) {
+              var message;
+              if (err) {
+                if (err.message) {
+                  message = err.message;
+                } else {
+                  message = "Unknown error message";
+                }
+              }
+              formatResponse(message, cb);
+            });
+          });
+        });
+
+        function formatResponse(msg, cb) {
+          var messages = {
+            errorMessages: []
+          };
+          if (msg) {
+            messages.errorMessages.push(msg);
+          }
+          return createValidatorResponse(fieldId, messages, function (err, res) {
+            if (err) return cb(err);
+            var ret = {
+              validation: {}
+            };
+            ret.validation[fieldId] = res;
+            return cb(undefined, ret);
+          });
+        }
+      }
+
+      function createValidatorResponse(fieldId, messages, cb) {
+        // intentionally not checking err here, used further down to get validation errors
+        var res = {};
+        res.fieldId = fieldId;
+        res.errorMessages = messages.errorMessages || [];
+        res.fieldErrorMessage = messages.fieldErrorMessage || [];
+        async.some(res.errorMessages, function (item, cb) {
+          return cb(item !== null);
+        }, function (someErrors) {
+          res.valid = !someErrors && (res.fieldErrorMessage.length < 1);
+
+          return cb(undefined, res);
+        });
+      }
+
+      function getFieldValidationStatus(submittedField, fieldDef, previousFieldValues, cb) {
+        isFieldVisible(fieldDef._id, true, function(err, visible){
+          if(err){
+            return cb(err);
+          }
+          validateFieldInternal(submittedField, fieldDef, previousFieldValues, visible, function (err, messages) {
+            if (err) return cb(err);
+            createValidatorResponse(submittedField.fieldId, messages, cb);
+          });
+        });
+      }
+
+      function getMapFunction(key, map, cb) {
+        var validator = map[key];
+        if (!validator) {
+          return cb(new Error("Invalid Field Type " + key));
+        }
+
+        return cb(undefined, validator);
+      }
+
+      function getValidatorFunction(fieldType, cb) {
+        return getMapFunction(fieldType, validatorsMap, cb);
+      }
+
+      function getClientValidatorFunction(fieldType, cb) {
+        return getMapFunction(fieldType, validatorsClientMap, cb);
+      }
+
+      function fieldEmpty(fieldValue) {
+        return ('undefined' === typeof fieldValue || null === fieldValue || "" === fieldValue); // empty string also regarded as not specified
+      }
+
+      function validateFieldInternal(submittedField, fieldDef, previousFieldValues, visible, cb) {
+        previousFieldValues = previousFieldValues || null;
+        countSubmittedValues(submittedField, function (err, numSubmittedValues) {
+          if (err) return cb(err);
+          async.series({
+            valuesSubmitted: async.apply(checkValueSubmitted, submittedField, fieldDef, visible),
+            repeats: async.apply(checkRepeat, numSubmittedValues, fieldDef, visible),
+            values: async.apply(checkValues, submittedField, fieldDef, previousFieldValues)
+          }, function (err, results) {
+            if (err) return cb(err);
+
+            var fieldErrorMessages = [];
+            if (results.valuesSubmitted) {
+              fieldErrorMessages.push(results.valuesSubmitted);
+            }
+            if (results.repeats) {
+              fieldErrorMessages.push(results.repeats);
+            }
+            return cb(undefined, {
+              fieldErrorMessage: fieldErrorMessages,
+              errorMessages: results.values
+            });
+          });
+        });
+
+        return; // just functions below this
+
+        function checkValueSubmitted(submittedField, fieldDefinition, visible, cb) {
+          if (!fieldDefinition.required) return cb(undefined, null);
+
+          var valueSubmitted = submittedField && submittedField.fieldValues && (submittedField.fieldValues.length > 0);
+          //No value submitted is only an error if the field is visible.
+          if (!valueSubmitted && visible) {
+            return cb(undefined, "No value submitted for field " + fieldDefinition.name);
+          }
+          return cb(undefined, null);
+
+        }
+
+        function countSubmittedValues(submittedField, cb) {
+          var numSubmittedValues = 0;
+          if (submittedField && submittedField.fieldValues && submittedField.fieldValues.length > 0) {
+            for (var i = 0; i < submittedField.fieldValues.length; i += 1) {
+              if (submittedField.fieldValues[i]) {
+                numSubmittedValues += 1;
+              }
+            }
+          }
+          return cb(undefined, numSubmittedValues);
+        }
+
+        function checkRepeat(numSubmittedValues, fieldDefinition, visible, cb) {
+          //If the field is not visible, then checking the repeating values of the field is not required
+          if(!visible){
+            return cb(undefined, null);
+          }
+
+          if (fieldDefinition.repeating && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.definition) {
+            if (fieldDefinition.fieldOptions.definition.minRepeat) {
+              if (numSubmittedValues < fieldDefinition.fieldOptions.definition.minRepeat) {
+                return cb(undefined, "Expected min of " + fieldDefinition.fieldOptions.definition.minRepeat + " values for field " + fieldDefinition.name + " but got " + numSubmittedValues);
+              }
+            }
+
+            if (fieldDefinition.fieldOptions.definition.maxRepeat) {
+              if (numSubmittedValues > fieldDefinition.fieldOptions.definition.maxRepeat) {
+                return cb(undefined, "Expected max of " + fieldDefinition.fieldOptions.definition.maxRepeat + " values for field " + fieldDefinition.name + " but got " + numSubmittedValues);
+              }
+            }
+          } else {
+            if (numSubmittedValues > 1) {
+              return cb(undefined, "Should not have multiple values for non-repeating field");
+            }
+          }
+
+          return cb(undefined, null);
+        }
+
+        function checkValues(submittedField, fieldDefinition, previousFieldValues, cb) {
+          getValidatorFunction(fieldDefinition.type, function (err, validator) {
+            if (err) return cb(err);
+            async.map(submittedField.fieldValues, function (fieldValue, cb) {
+              if (fieldEmpty(fieldValue)) {
+                return cb(undefined, null);
+              } else {
+                validator(fieldValue, fieldDefinition, previousFieldValues, function (validationError) {
+                  var errorMessage;
+                  if (validationError) {
+                    errorMessage = validationError.message || "Error during validation of field";
+                  } else {
+                    errorMessage = null;
+                  }
+
+                  if (submissionRequiredFieldsMap[fieldDefinition._id]) { // set to true if at least one value
+                    submissionRequiredFieldsMap[fieldDefinition._id].submitted = true;
+                  }
+
+                  return cb(undefined, errorMessage);
+                });
+              }
+            }, function (err, results) {
+              if (err) return cb(err);
+
+              return cb(undefined, results);
+            });
+          });
+        }
+      }
+
+      function convertSimpleFormatToRegex(field_format_string) {
+        var regex = "^";
+        var C = "c".charCodeAt(0);
+        var N = "n".charCodeAt(0);
+
+        var i;
+        var ch;
+        var match;
+        var len = field_format_string.length;
+        for (i = 0; i < len; i += 1) {
+          ch = field_format_string.charCodeAt(i);
+          switch (ch) {
+            case C:
+              match = "[a-zA-Z0-9]";
+              break;
+            case N:
+              match = "[0-9]";
+              break;
+            default:
+              var num = ch.toString(16).toUpperCase();
+              match = "\\u" + ("0000" + num).substr(-4);
+              break;
+          }
+          regex += match;
+        }
+        return regex + "$";
+      }
+
+      function validFormatRegex(fieldValue, field_format_string) {
+        var pattern = new RegExp(field_format_string);
+        return pattern.test(fieldValue);
+      }
+
+      function validFormat(fieldValue, field_format_mode, field_format_string) {
+        var regex;
+        if ("simple" === field_format_mode) {
+          regex = convertSimpleFormatToRegex(field_format_string);
+        } else if ("regex" === field_format_mode) {
+          regex = field_format_string;
+        } else { // should never be anything else, but if it is then default to simple format
+          regex = convertSimpleFormatToRegex(field_format_string);
+        }
+
+        return validFormatRegex(fieldValue, regex);
+      }
+
+      function validatorString(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (typeof fieldValue !== "string") {
+          return cb(new Error("Expected string but got " + typeof(fieldValue)));
+        }
+
+        var validation = {};
+        if (fieldDefinition && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) {
+          validation = fieldDefinition.fieldOptions.validation;
+        }
+
+        var field_format_mode = validation.field_format_mode || "";
+        field_format_mode = field_format_mode.trim();
+        var field_format_string = validation.field_format_string || "";
+        field_format_string = field_format_string.trim();
+
+        if (field_format_string && (field_format_string.length > 0) && field_format_mode && (field_format_mode.length > 0)) {
+          if (!validFormat(fieldValue, field_format_mode, field_format_string)) {
+            return cb(new Error("field value in incorrect format, expected format: " + field_format_string + " but submission value is: " + fieldValue));
+          }
+        }
+
+        if (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation && fieldDefinition.fieldOptions.validation.min) {
+          if (fieldValue.length < fieldDefinition.fieldOptions.validation.min) {
+            return cb(new Error("Expected minimum string length of " + fieldDefinition.fieldOptions.validation.min + " but submission is " + fieldValue.length + ". Submitted val: " + fieldValue));
+          }
+        }
+
+        if (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation && fieldDefinition.fieldOptions.validation.max) {
+          if (fieldValue.length > fieldDefinition.fieldOptions.validation.max) {
+            return cb(new Error("Expected maximum string length of " + fieldDefinition.fieldOptions.validation.max + " but submission is " + fieldValue.length + ". Submitted val: " + fieldValue));
+          }
+        }
+
+        return cb();
+      }
+
+      function validatorNumericString(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        var testVal = (fieldValue - 0); // coerce to number (or NaN)
+        /*jshint eqeqeq:false */
+        var numeric = (testVal == fieldValue); // testVal co-erced to numeric above, so numeric comparison and NaN != NaN
+
+        if (!numeric) {
+          return cb(new Error("Expected numeric but got: " + fieldValue));
+        }
+
+        return validatorNumber(testVal, fieldDefinition, previousFieldValues, cb);
+      }
+
+      function validatorNumber(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (typeof fieldValue !== "number") {
+          return cb(new Error("Expected number but got " + typeof(fieldValue)));
+        }
+
+        if (fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation && fieldDefinition.fieldOptions.validation.min) {
+          if (fieldValue < fieldDefinition.fieldOptions.validation.min) {
+            return cb(new Error("Expected minimum Number " + fieldDefinition.fieldOptions.validation.min + " but submission is " + fieldValue + ". Submitted number: " + fieldValue));
+          }
+        }
+
+        if (fieldDefinition.fieldOptions.validation.max) {
+          if (fieldValue > fieldDefinition.fieldOptions.validation.max) {
+            return cb(new Error("Expected maximum Number " + fieldDefinition.fieldOptions.validation.max + " but submission is " + fieldValue + ". Submitted number: " + fieldValue));
+          }
+        }
+
+        return cb();
+      }
+
+      function validatorEmail(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (typeof(fieldValue) !== "string") {
+          return cb(new Error("Expected string but got " + typeof(fieldValue)));
+        }
+
+        if (fieldValue.match(/[-0-9a-zA-Z.+_]+@[-0-9a-zA-Z.+_]+\.[a-zA-Z]{2,4}/g) === null) {
+          return cb(new Error("Invalid email address format: " + fieldValue));
+        } else {
+          return cb();
+        }
+      }
+
+      function validatorDropDown(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (typeof(fieldValue) !== "string") {
+          return cb(new Error("Expected submission to be string but got " + typeof(fieldValue)));
+        }
+
+        //Check value exists in the field definition
+        if (!fieldDefinition.fieldOptions.definition.options) {
+          return cb(new Error("No options exist for field " + fieldDefinition.name));
+        }
+
+        async.some(fieldDefinition.fieldOptions.definition.options, function (dropdownOption, cb) {
+          return cb(dropdownOption.label === fieldValue);
+        }, function (found) {
+          if (!found) {
+            return cb(new Error("Invalid option specified: " + fieldValue));
+          } else {
+            return cb();
+          }
+        });
+      }
+
+      function validatorCheckboxes(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        var minVal;
+        if (fieldDefinition && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) {
+          minVal = fieldDefinition.fieldOptions.validation.min;
+        }
+        var maxVal;
+        if (fieldDefinition && fieldDefinition.fieldOptions && fieldDefinition.fieldOptions.validation) {
+          maxVal = fieldDefinition.fieldOptions.validation.max;
+        }
+
+        if (minVal) {
+          if (fieldValue.selections === null || fieldValue.selections === undefined || fieldValue.selections.length < minVal) {
+            var len;
+            if (fieldValue.selections) {
+              len = fieldValue.selections.length;
+            }
+            return cb(new Error("Expected a minimum number of selections " + minVal + " but got " + len));
+          }
+        }
+
+        if (maxVal) {
+          if (fieldValue.selections) {
+            if (fieldValue.selections.length > maxVal) {
+              return cb(new Error("Expected a maximum number of selections " + maxVal + " but got " + fieldValue.selections.length));
+            }
+          }
+        }
+
+        var optionsInCheckbox = [];
+
+        async.eachSeries(fieldDefinition.fieldOptions.definition.options, function (choice, cb) {
+          for (var choiceName in choice) {
+            optionsInCheckbox.push(choice[choiceName]);
+          }
+          return cb();
+        }, function () {
+          async.eachSeries(fieldValue.selections, function (selection, cb) {
+            if (typeof(selection) !== "string") {
+              return cb(new Error("Expected checkbox submission to be string but got " + typeof(selection)));
+            }
+
+            if (optionsInCheckbox.indexOf(selection) === -1) {
+              return cb(new Error("Checkbox Option " + selection + " does not exist in the field."));
+            }
+
+            return cb();
+          }, cb);
+        });
+      }
+
+      function validatorLocationMap(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (fieldValue.lat && fieldValue["long"]) {
+          if (isNaN(parseFloat(fieldValue.lat)) || isNaN(parseFloat(fieldValue["long"]))) {
+            return cb(new Error("Invalid latitude and longitude values"));
+          } else {
+            return cb();
+          }
+        } else {
+          return cb(new Error("Invalid object for locationMap submission"));
+        }
+      }
+
+
+      function validatorLocation(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (fieldDefinition.fieldOptions.definition.locationUnit === "latlong") {
+          if (fieldValue.lat && fieldValue["long"]) {
+            if (isNaN(parseFloat(fieldValue.lat)) || isNaN(parseFloat(fieldValue["long"]))) {
+              return cb(new Error("Invalid latitude and longitude values"));
+            } else {
+              return cb();
+            }
+          } else {
+            return cb(new Error("Invalid object for latitude longitude submission"));
+          }
+        } else {
+          if (fieldValue.zone && fieldValue.eastings && fieldValue.northings) {
+            //Zone must be 3 characters, eastings 6 and northings 9
+            return validateNorthingsEastings(fieldValue, cb);
+          } else {
+            return cb(new Error("Invalid object for northings easting submission. Zone, Eastings and Northings elemets are required"));
+          }
+        }
+
+        function validateNorthingsEastings(fieldValue, cb) {
+          if (typeof(fieldValue.zone) !== "string" || fieldValue.zone.length === 0) {
+            return cb(new Error("Invalid zone definition for northings and eastings location. " + fieldValue.zone));
+          }
+
+          var east = parseInt(fieldValue.eastings, 10);
+          if (isNaN(east)) {
+            return cb(new Error("Invalid eastings definition for northings and eastings location. " + fieldValue.eastings));
+          }
+
+          var north = parseInt(fieldValue.northings, 10);
+          if (isNaN(north)) {
+            return cb(new Error("Invalid northings definition for northings and eastings location. " + fieldValue.northings));
+          }
+
+          return cb();
+        }
+      }
+
+      function validatorAnyFile(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        // if any of the following validators return ok, then return ok.
+        validatorBase64(fieldValue, fieldDefinition, previousFieldValues, function (err) {
+          if (!err) {
+            return cb();
+          }
+          validatorFile(fieldValue, fieldDefinition, previousFieldValues, function (err) {
+            if (!err) {
+              return cb();
+            }
+            validatorFileObj(fieldValue, fieldDefinition, previousFieldValues, function (err) {
+              if (!err) {
+                return cb();
+              }
+              return cb(err);
+            });
+          });
+        });
+      }
+
+      /**
+       * Function to validate a barcode submission
+       *
+       * Must be an object with the following contents
+       *
+       * {
+     *   text: "<<content of barcode>>",
+     *   format: "<<barcode content format>>"
+     * }
+       *
+       * @param fieldValue
+       * @param fieldDefinition
+       * @param previousFieldValues
+       * @param cb
+       */
+      function validatorBarcode(fieldValue, fieldDefinition, previousFieldValues, cb){
+        if(typeof(fieldValue) !== "object" || fieldValue === null){
+          return cb(new Error("Expected object but got " + typeof(fieldValue)));
+        }
+
+        if(typeof(fieldValue.text) !== "string" || fieldValue.text.length === 0){
+          return cb(new Error("Expected text parameter."));
+        }
+
+        if(typeof(fieldValue.format) !== "string" || fieldValue.format.length === 0){
+          return cb(new Error("Expected format parameter."));
+        }
+
+        return cb();
+      }
+
+      function checkFileSize(fieldDefinition, fieldValue, sizeKey, cb) {
+        fieldDefinition = fieldDefinition || {};
+        var fieldOptions = fieldDefinition.fieldOptions || {};
+        var fieldOptionsDef = fieldOptions.definition || {};
+        var fileSizeMax = fieldOptionsDef.file_size || null; //FileSizeMax will be in KB. File size is in bytes
+
+        if (fileSizeMax !== null) {
+          var fieldValueSize = fieldValue[sizeKey];
+          var fieldValueSizeKB = 1;
+          if (fieldValueSize > 1000) {
+            fieldValueSizeKB = fieldValueSize / 1000;
+          }
+          if (fieldValueSize > (fileSizeMax * 1000)) {
+            return cb(new Error("File size is too large. File can be a maximum of " + fileSizeMax + "KB. Size of file selected: " + fieldValueSizeKB + "KB"));
+          } else {
+            return cb();
+          }
+        } else {
+          return cb();
+        }
+      }
+
+      function validatorFile(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (typeof fieldValue !== "object") {
+          return cb(new Error("Expected object but got " + typeof(fieldValue)));
+        }
+
+        var keyTypes = [
+          {
+            keyName: "fileName",
+            valueType: "string"
+          },
+          {
+            keyName: "fileSize",
+            valueType: "number"
+          },
+          {
+            keyName: "fileType",
+            valueType: "string"
+          },
+          {
+            keyName: "fileUpdateTime",
+            valueType: "number"
+          },
+          {
+            keyName: "hashName",
+            valueType: "string"
+          }
+        ];
+
+        async.each(keyTypes, function (keyType, cb) {
+          var actualType = typeof fieldValue[keyType.keyName];
+          if (actualType !== keyType.valueType) {
+            return cb(new Error("Expected " + keyType.valueType + " but got " + actualType));
+          }
+          if (keyType.keyName === "fileName" && fieldValue[keyType.keyName].length <= 0) {
+            return cb(new Error("Expected value for " + keyType.keyName));
+          }
+
+          return cb();
+        }, function (err) {
+          if (err) return cb(err);
+
+          checkFileSize(fieldDefinition, fieldValue, "fileSize", function (err) {
+            if (err) {
+              return cb(err);
+            }
+
+            if (fieldValue.hashName.indexOf("filePlaceHolder") > -1) { //TODO abstract out to config
+              return cb();
+            } else if (previousFieldValues && previousFieldValues.hashName && previousFieldValues.hashName.indexOf(fieldValue.hashName) > -1) {
+              return cb();
+            } else {
+              return cb(new Error("Invalid file placeholder text" + fieldValue.hashName));
+            }
+          });
+        });
+      }
+
+      function validatorFileObj(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if ((typeof File !== "function")) {
+          return cb(new Error("Expected File object but got " + typeof(fieldValue)));
+        }
+
+        var keyTypes = [
+          {
+            keyName: "name",
+            valueType: "string"
+          },
+          {
+            keyName: "size",
+            valueType: "number"
+          }
+        ];
+
+        async.each(keyTypes, function (keyType, cb) {
+          var actualType = typeof fieldValue[keyType.keyName];
+          if (actualType !== keyType.valueType) {
+            return cb(new Error("Expected " + keyType.valueType + " but got " + actualType));
+          }
+          if (actualType === "string" && fieldValue[keyType.keyName].length <= 0) {
+            return cb(new Error("Expected value for " + keyType.keyName));
+          }
+          if (actualType === "number" && fieldValue[keyType.keyName] <= 0) {
+            return cb(new Error("Expected > 0 value for " + keyType.keyName));
+          }
+
+          return cb();
+        }, function (err) {
+          if (err) return cb(err);
+
+
+          checkFileSize(fieldDefinition, fieldValue, "size", function (err) {
+            if (err) {
+              return cb(err);
+            }
+            return cb();
+          });
+        });
+      }
+
+      function validatorBase64(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        if (typeof fieldValue !== "string") {
+          return cb(new Error("Expected base64 string but got " + typeof(fieldValue)));
+        }
+
+        if (fieldValue.length <= 0) {
+          return cb(new Error("Expected base64 string but was empty"));
+        }
+
+        return cb();
+      }
+
+      function validatorDateTime(fieldValue, fieldDefinition, previousFieldValues, cb) {
+        var testDate;
+        var valid = false;
+        var parts = [];
+
+        if (typeof(fieldValue) !== "string") {
+          return cb(new Error("Expected string but got " + typeof(fieldValue)));
+        }
+
+        switch (fieldDefinition.fieldOptions.definition.datetimeUnit) {
+          case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATEONLY:
+
+            parts = fieldValue.split("/");
+            valid = parts.length === 3;
+
+            if(valid){
+              valid = isNumberBetween(parts[2], 1, 31);
+            }
+
+            if(valid){
+              valid = isNumberBetween(parts[1], 1, 12);
+            }
+
+            if(valid){
+              valid = isNumberBetween(parts[0], 1000, 9999);
+            }
+
+            try {
+              if(valid){
+                testDate = new Date(parts[3], parts[1], parts[0]);
+              } else {
+                testDate = new Date(fieldValue);
+              }
+              valid = (testDate.toString() !== "Invalid Date");
+            } catch (e) {
+              valid = false;
+            }
+
+            if (valid) {
+              return cb();
+            } else {
+              return cb(new Error("Invalid date value " + fieldValue + ". Date format is YYYY/MM/DD"));
+            }
+            break;
+          case FIELD_TYPE_DATETIME_DATETIMEUNIT_TIMEONLY:
+            parts = fieldValue.split(':');
+            valid = (parts.length === 2) || (parts.length === 3);
+            if (valid) {
+              valid = isNumberBetween(parts[0], 0, 23);
+            }
+            if (valid) {
+              valid = isNumberBetween(parts[1], 0, 59);
+            }
+            if (valid && (parts.length === 3)) {
+              valid = isNumberBetween(parts[2], 0, 59);
+            }
+            if (valid) {
+              return cb();
+            } else {
+              return cb(new Error("Invalid time value " + fieldValue + ". Time format is HH:MM:SS"));
+            }
+            break;
+          case FIELD_TYPE_DATETIME_DATETIMEUNIT_DATETIME:
+            parts = fieldValue.split(/[- :]/);
+
+            valid = (parts.length === 6) || (parts.length === 5);
+
+            if(valid){
+              valid = isNumberBetween(parts[2], 1, 31);
+            }
+
+            if(valid){
+              valid = isNumberBetween(parts[1], 1, 12);
+            }
+
+            if(valid){
+              valid = isNumberBetween(parts[0], 1000, 9999);
+            }
+
+            if (valid) {
+              valid = isNumberBetween(parts[3], 0, 23);
+            }
+            if (valid) {
+              valid = isNumberBetween(parts[4], 0, 59);
+            }
+            if (valid && parts.length === 6) {
+              valid = isNumberBetween(parts[5], 0, 59);
+            } else {
+              parts[5] = 0;
+            }
+
+            try {
+              if(valid){
+                testDate = new Date(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]);
+              } else {
+                testDate = new Date(fieldValue);
+              }
+
+              valid = (testDate.toString() !== "Invalid Date");
+            } catch (e) {
+              valid = false;
+            }
+
+            if(valid){
+              return cb();
+            } else {
+              return cb(new Error("Invalid dateTime string " + fieldValue + ". dateTime format is YYYY/MM/DD HH:MM:SS"));
+            }
+            break;
+          default:
+            return cb(new Error("Invalid dateTime fieldtype " + fieldDefinition.fieldOptions.definition.datetimeUnit));
+        }
+      }
+
+      function validatorSection(value, fieldDefinition, previousFieldValues, cb) {
+        return cb(new Error("Should not submit section field: " + fieldDefinition.name));
+      }
+
+      function rulesResult(rules, cb) {
+        var visible = true;
+
+        // Itterate over each rule that this field is a predicate of
+        async.each(rules, function (rule, cbRule) {
+          // For each rule, itterate over the predicate fields and evaluate the rule
+          var predicateMapQueries = [];
+          var predicateMapPassed = [];
+          async.each(rule.ruleConditionalStatements, function (ruleConditionalStatement, cbPredicates) {
+            var field = fieldMap[ruleConditionalStatement.sourceField];
+            var passed = false;
+            var submissionValues = [];
+            var condition;
+            var testValue;
+            if (submissionFieldsMap[ruleConditionalStatement.sourceField] && submissionFieldsMap[ruleConditionalStatement.sourceField].fieldValues) {
+              submissionValues = submissionFieldsMap[ruleConditionalStatement.sourceField].fieldValues;
+              condition = ruleConditionalStatement.restriction;
+              testValue = ruleConditionalStatement.sourceValue;
+
+              // Validate rule predictes on the first entry only.
+              passed = isConditionActive(field, submissionValues[0], testValue, condition);
+            }
+            predicateMapQueries.push({
+              "field": field,
+              "submissionValues": submissionValues,
+              "condition": condition,
+              "testValue": testValue,
+              "passed": passed
+            });
+
+            if (passed) {
+              predicateMapPassed.push(field);
+            }
+            return cbPredicates();
+          }, function (err) {
+            if (err) cbRule(err);
+
+            function rulesPassed(condition, passed, queries) {
+              return ((condition === "and") && ((passed.length === queries.length))) || // "and" condition - all rules must pass
+                ((condition === "or") && ((passed.length > 0))); // "or" condition - only one rule must pass
+            }
+
+            /**
+             * If any rule condition that targets the field/page hides that field/page, then the page is hidden.
+             * Hiding the field/page takes precedence over any show. This will maintain consistency.
+             * E.g. if x is y then show p1,p2 takes precendence over if x is z then hide p1, p2
+             */
+            if (rulesPassed(rule.ruleConditionalOperator, predicateMapPassed, predicateMapQueries)) {
+              visible = (rule.type === "show") && visible;
+            } else {
+              visible = (rule.type !== "show") && visible;
+            }
+
+            return cbRule();
+          });
+        }, function (err) {
+          if (err) return cb(err);
+
+          return cb(undefined, visible);
+        });
+      }
+
+      function isPageVisible(pageId, cb) {
+        init(function (err) {
+          if (err) return cb(err);
+          if (isPageRuleSubject(pageId)) { // if the page is the target of a rule
+            return rulesResult(pageRuleSubjectMap[pageId], cb); // execute page rules
+          } else {
+            return cb(undefined, true); // if page is not subject of any rule then must be visible
+          }
+        });
+      }
+
+      function isFieldVisible(fieldId, checkContainingPage, cb) {
+        /*
+         * fieldId = Id of field to check for reule predeciate references
+         * checkContainingPage = if true check page containing field, and return false if the page is hidden
+         */
+        init(function (err) {
+          if (err) return cb(err);
+
+          // Fields are visable by default
+          var field = fieldMap[fieldId];
+
+          /**
+           * If the field is an admin field, the rules engine returns an error, as admin fields cannot be the subject of rules engine actions.
+           */
+          if(adminFieldMap[fieldId]){
+            return cb(new Error("Submission " + fieldId + " is an admin field. Admin fields cannot be passed to the rules engine."));
+          } else if(!field){
+            return cb(new Error("Field does not exist in form"));
+          }
+
+          async.waterfall([
+
+            function testPage(cb) {
+              if (checkContainingPage) {
+                isPageVisible(field.pageId, cb);
+              } else {
+                return cb(undefined, true);
+              }
+            },
+            function testField(pageVisible, cb) {
+              if (!pageVisible) { // if page containing field is not visible then don't need to check field
+                return cb(undefined, false);
+              }
+
+              if (isFieldRuleSubject(fieldId)) { // If the field is the subject of a rule it may have been hidden
+                return rulesResult(fieldRuleSubjectMap[fieldId], cb); // execute field rules
+              } else {
+                return cb(undefined, true); // if not subject of field rules then can't be hidden
+              }
+            }
+          ], cb);
+        });
+      }
+
+      /*
+       * check all rules actions
+       *      res:
+       *      {
+       *          "actions": {
+       *              "pages": {
+       *                  "targetId": {
+       *                      "targetId": "",
+       *                      "action": "show|hide"
+       *                  }
+       *              },
+       *              "fields": {
+       *              }
+       *          }
+       *      }
+       */
+      function checkRules(submissionJSON, cb) {
+        init(function (err) {
+          if (err) return cb(err);
+
+          initSubmission(submissionJSON, function (err) {
+            if (err) return cb(err);
+            var actions = {};
+
+            async.parallel([
+
+              function (cb) {
+                actions.fields = {};
+                async.eachSeries(Object.keys(fieldRuleSubjectMap), function (fieldId, cb) {
+                  isFieldVisible(fieldId, false, function (err, fieldVisible) {
+                    if (err) return cb(err);
+                    actions.fields[fieldId] = {
+                      targetId: fieldId,
+                      action: (fieldVisible ? "show" : "hide")
+                    };
+                    return cb();
+                  });
+                }, cb);
+              },
+              function (cb) {
+                actions.pages = {};
+                async.eachSeries(Object.keys(pageRuleSubjectMap), function (pageId, cb) {
+                  isPageVisible(pageId, function (err, pageVisible) {
+                    if (err) return cb(err);
+                    actions.pages[pageId] = {
+                      targetId: pageId,
+                      action: (pageVisible ? "show" : "hide")
+                    };
+                    return cb();
+                  });
+                }, cb);
+              }
+            ], function (err) {
+              if (err) return cb(err);
+
+              return cb(undefined, {
+                actions: actions
+              });
+            });
+          });
+        });
+      }
+
+      function isConditionActive(field, fieldValue, testValue, condition) {
+
+        var fieldType = field.type;
+        var fieldOptions = field.fieldOptions ? field.fieldOptions : {};
+
+        if(typeof(fieldValue) === 'undefined' || fieldValue === null){
+          return false;
+        }
+
+        if(typeof(fieldValueComparison[fieldType]) === "function"){
+          return fieldValueComparison[fieldType](fieldValue, testValue, condition, fieldOptions);
+        } else {
+          return false;
+        }
+
+      }
+
+      function isNumberBetween(num, min, max) {
+        var numVal = parseInt(num, 10);
+        return (!isNaN(numVal) && (numVal >= min) && (numVal <= max));
+      }
+
+      return {
+        validateForm: validateForm,
+        validateField: validateField,
+        validateFieldValue: validateFieldValue,
+        checkRules: checkRules,
+
+        // The following are used internally, but exposed for tests
+        validateFieldInternal: validateFieldInternal,
+        initSubmission: initSubmission,
+        isFieldVisible: isFieldVisible,
+        isConditionActive: isConditionActive
+      };
     };
-  };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = formsRulesEngine;
-  }
+    if (typeof module !== 'undefined' && module.exports) {
+      module.exports = formsRulesEngine;
+    }
 
-}());
-
-/* This is the suffix file */
+  }());
+  /* This is the suffix file */
   return module.exports(formDef);
 }
 
 /* End of suffix file */
-
 
 //end  module;
 

@@ -1,0 +1,14 @@
+<div class="confirmBox">
+    <div class="confirmContent">
+      <% if(title) { %>
+        <h4><%=title%></h4>
+      <%}%>
+      <p><%=dialogText%></p>
+    </div>
+    <div class="btnBox">
+        <a class="okBtn"><%=okBtn%></a>
+        <% if(cancelBtn !== ":none:") { %>
+          <a class="cancelBtn"><%=cancelBtn%></a>
+        <% } %>
+    </div>
+</div>
