@@ -6,7 +6,8 @@ define([
     'views/base/BlankView',
     'views/login/LoginView',
     'views/about/AboutView',
-], function($, _, Backbone, BaseView, BlankView, LoginView, AboutView) {
+    'views/plugins/AssortedView',
+], function($, _, Backbone, BaseView, BlankView, LoginView, AboutView, AssortedView) {
 
     var Router = Backbone.Router.extend({
 
@@ -14,6 +15,7 @@ define([
             'login': 'loginView',
             'logout': 'logout',
             'about': 'aboutView',
+            'asst': 'assortedView',
             '*default': 'defaultView'
         },
 
@@ -63,6 +65,9 @@ define([
         },
         aboutView: function() {
             App.Page.showView(new AboutView());
+        },
+        assortedView: function() {
+            App.Page.showView(new AssortedView());
         },
         defaultView: function() {
             App.Page.showView(new BlankView());
