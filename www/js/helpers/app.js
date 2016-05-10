@@ -26,6 +26,19 @@ define([
             Cloud: 'development',
             AppName: 'Template App'
         }
+        
+        if (window.cordova && window.cordova.plugins && window.cordova.plugins.notification.badge) {
+            cordova.plugins.notification.badge.promptForPermission();
+        }
+        if (typeof LocalFileSystem !== 'undefined') {
+            function onFS(fs) {
+                //leave in for now for debug
+                // alert(fs.root.fullPath);
+                App.filesystem = fs;
+                App.fileroot = fs.root.toURL();
+            }
+            window.requestFileSystem(LocalFileSystem.PERSISTENT, 0, onFS, null);
+        }
 
         if (typeof(AppVersion) !== "undefined") {
             this.VersionInfo.Client = AppVersion.version;

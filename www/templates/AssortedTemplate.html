@@ -1,6 +1,30 @@
+<h2 class="content-padded">Badge Plugin</h2>
 <div class="content-padded">
     <form class="badgeForm">
         <input type="tel" class="badgeNum" placeholder="Badge Number">
         <button type="submit" class="btn">Change Badge Number</button>
     </form>
 </div>
+<h2 class="content-padded">File Plugin</h2>
+<ul class="table-view content-padded">
+  <li class="table-view-cell">
+    <a class="download navigate-right">
+      Download Document
+    </a>
+    <% if(docDownloaded) { %>
+      <span class="badge">done!</span>
+    <% } %>
+  </li>
+  <% if(docDownloaded) { %>
+  <li class="table-view-cell">
+    <a class="deleteDoc navigate-right">
+      Delete Document
+    </a>
+  </li>
+  <% } %>
+  <li class="table-view-cell">
+    <a class="showDoc navigate-right">
+      Open Document
+    </a>
+  </li>
+</ul>
