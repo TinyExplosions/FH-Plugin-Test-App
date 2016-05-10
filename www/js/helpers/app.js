@@ -38,9 +38,7 @@ define([
 
 
         if (navigator.splashscreen) {
-            setTimeout(function() {
-                navigator.splashscreen.hide();
-            }, 2000);
+            navigator.splashscreen.hide();
         }
 
         this.Router = new Router();
