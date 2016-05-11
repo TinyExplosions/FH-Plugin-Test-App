@@ -1,7 +1,7 @@
 {
   "plugins": [
     {
-      "id": "org.apache.cordova.statusbar",
+      "id": "cordova-plugin-statusbar",
       "url": "https://github.com/apache/cordova-plugin-statusbar",
       "version": "latest",
       "preferences": {
@@ -11,7 +11,7 @@
       }
     },
     {
-      "id": "org.apache.cordova.file",
+      "id": "cordova-plugin-file",
       "url": "https://github.com/apache/cordova-plugin-file.git",
       "version": "latest"
     },
@@ -21,7 +21,12 @@
       "version": "latest"
     },
     {
-      "id": "org.apache.cordova.inappbrowser",
+        "id": "cordova-plugin-contacts",
+        "url": "https://github.com/apache/cordova-plugin-contacts",
+        "version": "latest"
+    },
+    {
+      "id": "cordova-plugin-inappbrowser",
       "url": "https://github.com/apache/cordova-plugin-inappbrowser",
       "version": "latest"
     },
